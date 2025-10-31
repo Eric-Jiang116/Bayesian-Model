@@ -6,7 +6,7 @@ VCData = pd.read_csv("vc_training_and_test_set.csv")
 
 v = VCData["v_pred"].to_numpy(dtype='float32')  # shape (nv_pred,)
 columns = VCData.shape[1]
-vc = VCData.iloc[:, 1: columns-1].to_numpy(dtype='float32')   # shape (nv_pred, P)
+vc = VCData.iloc[:, 1:columns].to_numpy(dtype='float32')   # shape (nv_pred, P)
 
 v_mean, v_std = v.mean(), v.std()
 v_norm = (v - v_mean) / (v_std + 1e-8)
