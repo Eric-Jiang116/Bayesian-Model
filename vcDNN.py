@@ -6,10 +6,11 @@ import matplotlib.pyplot as plt
 
 VCData = pd.read_csv("vc_training_and_test_set.csv")
 
+# Extract v_pred and vc from the dataset
 v = VCData["v_pred"].to_numpy(dtype='float32').reshape(-1, 1) # shape (nv_pred,)
-columns = VCData.shape[1]
 vc = VCData.iloc[:, 1:].to_numpy(dtype='float32')   # shape (nv_pred, P)
 
+# Normalize v for training stability
 v_mean, v_std = v.mean(), v.std()
 v_norm = (v - v_mean) / (v_std + 1e-8)
 
@@ -24,7 +25,7 @@ Y_test  = torch.tensor(vc_test)
 
 P = vc.shape[1]   # number of VC functions
 
-def model(P, hidden_dim):
+def VCNet(P, hidden_dim):
     layers = []
     in_dim = 1
     for h in hidden_dim:
@@ -34,8 +35,8 @@ def model(P, hidden_dim):
     layers.append(nn.Linear(in_dim, P))
     return nn.Sequential(*layers)
 
-# Train the model
-def evaluate(model, epochs, optimizer, X_train, Y_train, X_test, Y_test, loss_fn, device="cpu"):
+def train(model, epochs, optimizer, X_train, Y_train, X_test, Y_test, loss_fn, device="cpu"):
+    model.to(device)
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
@@ -62,16 +63,18 @@ def plot_predictions(v_grid_orig, vc_pred, v, vc):
 
 #Create model, optimizer, loss function
 hidden_dim = [64, 64]
-model = model(P, hidden_dim)
+model = VCNet(P, hidden_dim)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 loss_fn = nn.MSELoss()
+
+# Check input and output dimensions
 assert X_train.shape[1] == model[0].in_features == 1
 assert Y_train.shape[1] == model[-1].out_features == P
 
 # Train model
-evaluate(model, epochs=2000, optimizer=optimizer, X_train=X_train, Y_train=Y_train, 
-         X_test=X_test, Y_test=Y_test, loss_fn=loss_fn)
+train(model, 2000, optimizer, X_train, Y_train, X_test, Y_test, loss_fn) #epoch = 2000
 
+# Predict on a grid of v values
 with torch.no_grad():
     v_grid = torch.linspace(v_norm.min(), v_norm.max(), 200).reshape(-1,1)
     vc_pred = model(v_grid).numpy()
