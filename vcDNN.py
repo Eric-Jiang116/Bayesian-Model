@@ -61,7 +61,7 @@ def plot_predictions(v_grid_orig, vc_pred, v, vc):
     plt.figure(figsize=(8,5))
     for j in range(P):
         plt.plot(v, vc[:, j], 'o', label=f'True f{j+1}', alpha=0.4)
-        plt.plot(v_grid_orig, vc_pred[:, j], '-', label=f'Pred f{j+1}')
+        plt.plot(v_grid_orig , vc_pred[:, j], '-', label=f'Pred f{j+1}')
     plt.xlabel('v')
     plt.ylabel('VC function values')
     plt.legend()
