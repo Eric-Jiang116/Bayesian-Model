@@ -19,12 +19,12 @@ v_train, v_test, vc_train, vc_test = train_test_split(v_norm, vc, test_size=0.2,
 v_train, v_val, vc_train, vc_val = train_test_split(v_train, vc_train, test_size=0.25, random_state=42)
 
 # Convert to torch tensors
-X_train = torch.tensor(v_train)
-Y_train = torch.tensor(vc_train)
-X_val = torch.tensor(v_val)
-Y_val = torch.tensor(vc_val)
-X_test  = torch.tensor(v_test)
-Y_test  = torch.tensor(vc_test)
+X_train = torch.tensor(v_train, dtype=torch.float32)
+Y_train = torch.tensor(vc_train, dtype=torch.float32)
+X_val = torch.tensor(v_val, dtype=torch.float32)
+Y_val = torch.tensor(vc_val, dtype=torch.float32)
+X_test  = torch.tensor(v_test, dtype=torch.float32)
+Y_test  = torch.tensor(vc_test, dtype=torch.float32)
 
 P = vc.shape[1]   # number of VC functions
 
@@ -40,7 +40,6 @@ def VCNet(P, hidden_dim, dropout):
     layers.append(nn.Linear(in_dim, P)) # last layer is linear to output 
     return nn.Sequential(*layers)
 
-# Need to apply MCMC dropout
 def train(model, epochs, optimizer, X_train, Y_train, X_val, Y_val, loss_fn, device="cpu"):
     model.to(device)
     for epoch in range(epochs):
