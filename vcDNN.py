@@ -22,13 +22,6 @@ norm = lambda x: (x - v_mean) / (v_std + 1e-8)
 
 Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
 
-# convert to tensor
-Xtrain = torch.tensor(Xtrain); Ytrain = torch.tensor(vc_train)
-Xval = torch.tensor(Xval); Yval = torch.tensor(vc_val)
-Xtest = torch.tensor(Xtest); Ytest = torch.tensor(vc_test)
-X_sub = torch.tensor(X_sub).float()
-rate = torch.tensor(rate).float()
-
 # model
 def VCNet(P, hidden=(64,64), dropout=0.2):
     layers, in_dim = [], 1
@@ -41,6 +34,18 @@ def VCNet(P, hidden=(64,64), dropout=0.2):
 def rate_fn(X_sub, vc):
     return torch.exp((X_sub * vc).sum(dim=1, keepdim=True))
 
+# convert to tensor
+X_sub = torch.tensor(X_sub).float()
+rate = torch.tensor(rate).float()
+
+Xtrain = torch.tensor(Xtrain)
+Xval = torch.tensor(Xval)
+Xtest = torch.tensor(Xtest)
+
+Ytrain =   # rate train = exp(xsub * vc train)
+Yval = 
+Ytest = rate
+
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
@@ -49,13 +54,15 @@ loss_fn = nn.MSELoss()
 for epoch in range(2000):
     model.train()
     opt.zero_grad()
-    loss = loss_fn(model(Xtrain), Ytrain)
+    rate_pred = rate_fn(model(Xtrain), X_sub) # get rate prediction
+    loss = loss_fn(rate_pred, Ytrain) # loss on rate
     loss.backward()
     opt.step()
     if epoch % 200 == 0:
         model.eval()
         with torch.no_grad():
-            val = loss_fn(model(Xval), Yval).item()
+            rate_val = rate_fn(model(Xval), X_sub)
+            val = loss_fn(rate_val, Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val:.6f}")
 
 # --- evaluate & plot properly ---
