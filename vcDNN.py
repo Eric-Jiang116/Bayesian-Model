@@ -11,18 +11,18 @@ vc = VCData.iloc[:, 1:].to_numpy(np.float32)                  # (N, P), actual V
 P  = vc.shape[1]
 
 # 60/20/20
-v_tr, v_te, vc_tr, vc_te = train_test_split(v, vc, test_size=0.2, random_state=42)
-v_tr, v_va, vc_tr, vc_va = train_test_split(v_tr, vc_tr, test_size=0.25, random_state=42)
+v_train, v_test, vc_train, vc_test = train_test_split(v, vc, test_size=0.2, random_state=42)
+v_train, v_val, vc_train, vc_val = train_test_split(v_train, vc_train, test_size=0.25, random_state=42)
 
 # scale with TRAIN ONLY
-v_mean, v_std = v_tr.mean(), v_tr.std()
+v_mean, v_std = v_train.mean(), v_train.std()
 norm = lambda x: (x - v_mean) / (v_std + 1e-8)
 
-Xtr, Xva, Xte = map(norm, (v_tr, v_va, v_te))
+Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
 
-Xtr = torch.tensor(Xtr); Ytr = torch.tensor(vc_tr)
-Xva = torch.tensor(Xva); Yva = torch.tensor(vc_va)
-Xte = torch.tensor(Xte); Yte = torch.tensor(vc_te)
+Xtrain = torch.tensor(Xtrain); Ytrain = torch.tensor(vc_train)
+Xval = torch.tensor(Xval); Yval = torch.tensor(vc_val)
+Xtest = torch.tensor(Xtest); Ytest = torch.tensor(vc_test)
 
 # model
 def VCNet(P, hidden=(64,64), dropout=0.2):
@@ -41,24 +41,24 @@ loss_fn = nn.MSELoss()
 for epoch in range(2000):
     model.train()
     opt.zero_grad()
-    loss = loss_fn(model(Xtr), Ytr)
+    loss = loss_fn(model(Xtrain), Ytrain)
     loss.backward(); opt.step()
     if epoch % 200 == 0:
         model.eval()
         with torch.no_grad():
-            val = loss_fn(model(Xva), Yva).item()
+            val = loss_fn(model(Xval), Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val:.6f}")
 
 # --- evaluate & plot properly ---
-vmin, vmax = v_te.min(), v_te.max() # plot only test range for interpolation
+vmin, vmax = v_test.min(), v_test.max() # plot only test range for interpolation
 v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
 model.eval()
 with torch.no_grad():
     vc_pred_grid = model(torch.from_numpy(norm(v_grid))).cpu().numpy()
 # Plot: use the full truth (sorted by v) and the smooth predicted line
-order = np.argsort(v_te[:,0]) # indices to sort test set, so that v and vc have the same index order for plotting
-v_sorted  = v_te[order, 0]
-vc_sorted = vc_te[order]
+order = np.argsort(v_test[:,0]) # indices to sort test set, so that v and vc have the same index order for plotting
+v_sorted  = v_test[order, 0]
+vc_sorted = vc_test[order]
 
 plt.figure(figsize=(8,5))
 for j in range(P):
