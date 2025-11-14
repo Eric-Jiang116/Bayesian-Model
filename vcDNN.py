@@ -6,11 +6,13 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 
 VCData = pd.read_csv("vc_training_and_test_set.csv")
-v  = VCData.iloc[:, 0].to_numpy(np.float32).reshape(-1, 1)   # v_pred
-vc = VCData.iloc[:, 1:].to_numpy(np.float32)                  # (N, P), actual VC function values
+v  = pd.read_csv("v_pred.csv")   # v_pred
+vc = pd.read_csv("beta_pred.csv")          # (N, P), actual VC function values
+X_sub = pd.read_csv("X_sub.csv")
+rate = pd.read_csv("r_pred.csv")
 P  = vc.shape[1]
 
-# 60/20/20
+# split 60/20/20
 v_train, v_test, vc_train, vc_test = train_test_split(v, vc, test_size=0.2, random_state=42)
 v_train, v_val, vc_train, vc_val = train_test_split(v_train, vc_train, test_size=0.25, random_state=42)
 
@@ -20,9 +22,12 @@ norm = lambda x: (x - v_mean) / (v_std + 1e-8)
 
 Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
 
+# convert to tensor
 Xtrain = torch.tensor(Xtrain); Ytrain = torch.tensor(vc_train)
 Xval = torch.tensor(Xval); Yval = torch.tensor(vc_val)
 Xtest = torch.tensor(Xtest); Ytest = torch.tensor(vc_test)
+X_sub = torch.tensor(X_sub).float()
+rate = torch.tensor(rate).float()
 
 # model
 def VCNet(P, hidden=(64,64), dropout=0.2):
@@ -33,6 +38,9 @@ def VCNet(P, hidden=(64,64), dropout=0.2):
     layers += [nn.Linear(in_dim, P)]
     return nn.Sequential(*layers)
 
+def rate_fn(X_sub, vc):
+    return torch.exp((X_sub * vc).sum(dim=1, keepdim=True))
+
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
@@ -42,7 +50,8 @@ for epoch in range(2000):
     model.train()
     opt.zero_grad()
     loss = loss_fn(model(Xtrain), Ytrain)
-    loss.backward(); opt.step()
+    loss.backward()
+    opt.step()
     if epoch % 200 == 0:
         model.eval()
         with torch.no_grad():
