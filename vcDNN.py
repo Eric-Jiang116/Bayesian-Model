@@ -36,11 +36,16 @@ def rate_fn(X_sub, vc):
     returns rate: [N, n_subjects]
     """
     return torch.exp(X_sub @ vc.T).T # transpose 
+# def mcmc_predict(samples):
+#     model.train()
+#     preds = []
+#     for _ in range(samples):
+
 
 Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
 # convert to tensor
-X_sub = torch.tensor(X_sub).float()
-rate = torch.tensor(rate).float()
+X_sub = torch.tensor(X_sub.to_numpy()).float()
+rate = torch.tensor(rate.to_numpy()).float()
 
 Xtrain = torch.tensor(Xtrain).float()
 Xval = torch.tensor(Xval).float()
