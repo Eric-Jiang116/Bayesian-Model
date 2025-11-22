@@ -16,8 +16,8 @@ v_train, v_test, vc_train, vc_test, rate_train, rate_test = train_test_split(v, 
 v_train, v_val, vc_train, vc_val, rate_train, rate_val = train_test_split(v_train, vc_train, rate_train, test_size=0.25, random_state=42)
 
 # scale with TRAIN ONLY
-v_mean, v_std = v_train.mean(), v_train.std()
-norm = lambda x: (x - v_mean) / (v_std + 1e-8)
+v_mean, v_std = float(v_train.mean().iloc[0]), float(v_train.std().iloc[0])
+norm = lambda x: (x - v_mean) / (v_std)
 
 # model
 def VCNet(P, hidden=(64,64), dropout=0.2):
@@ -29,26 +29,26 @@ def VCNet(P, hidden=(64,64), dropout=0.2):
     return nn.Sequential(*layers)
 
 # rate function for training
-def rate_fn(X_sub, vc):
+def rate_fn(vc, X_sub):
     """
     beta: [N, P]
     X_sub: [n_subjects, P]
     returns rate: [N, n_subjects]
     """
-    return torch.exp(X_sub @ vc.T).T # transpose 
+    return torch.exp(vc @ X_sub.T) # transpose 
 
 Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
 # convert to tensor
-X_sub = torch.tensor(X_sub).float()
-rate = torch.tensor(rate).float()
+X_sub = torch.tensor(X_sub.to_numpy()).float()
+rate = torch.tensor(rate.to_numpy()).float()
 
-Xtrain = torch.tensor(Xtrain).float()
-Xval = torch.tensor(Xval).float()
-Xtest = torch.tensor(Xtest).float()
+Xtrain = torch.tensor(Xtrain.to_numpy()).float()
+Xval = torch.tensor(Xval.to_numpy()).float()
+Xtest = torch.tensor(Xtest.to_numpy()).float()
 
-Ytrain = torch.tensor(rate_train).float()
-Yval = torch.tensor(rate_val).float()
-Ytest = torch.tensor(rate_test).float()
+Ytrain = torch.tensor(rate_train.to_numpy()).float()
+Yval = torch.tensor(rate_val.to_numpy()).float()
+Ytest = torch.tensor(rate_test.to_numpy()).float()
 
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
@@ -58,8 +58,11 @@ loss_fn = nn.MSELoss()
 for epoch in range(2000):
     model.train()
     opt.zero_grad()
-    rate_pred = rate_fn(model(Xtrain), X_sub) # predict vc function + convert to rate
-    loss = loss_fn(rate_pred, Ytrain) # loss on rate
+
+    vc_train_pred = model(Xtrain)                 # [N_train, P]
+    rate_pred     = rate_fn(vc_train_pred, X_sub) # [N_train, n_subjects]
+    loss = loss_fn(rate_pred, Ytrain)
+
     loss.backward()
     opt.step()
     if epoch % 200 == 0:
@@ -69,18 +72,24 @@ for epoch in range(2000):
             val = loss_fn(rate_val, Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val:.6f}")
 
-# --- evaluate & plot properly ---
-vmin, vmax = v_test.min(), v_test.max() # plot only test range for interpolation
-v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
 model.eval()
 with torch.no_grad():
+    vc_test_pred  = model(Xtest)                 # [N_test, P]
+    rate_test_pred = rate_fn(vc_test_pred, X_sub)  # [N_test, n_subjects]
+    test_mse = loss_fn(rate_test_pred, Ytest).item()
+print(f"Test MSE: {test_mse}")
+# --- evaluate & plot properly ---
+vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0]) # plot only test range for interpolation
+v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
+with torch.no_grad():
     vc_pred = model(torch.from_numpy(norm(v_grid)))
-    rate_pred = rate_fn(X_sub, vc_pred).cpu().numpy()
+    rate_pred = rate_fn(vc_pred, X_sub).cpu().numpy()
 
 # Plot: use the full truth (sorted by v) and the smooth predicted line
-order = np.argsort(v_test[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
-v_sorted  = v_test[order, 0]
-rate_sorted = rate_test[order]
+
+order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
+v_sorted  = v_test.to_numpy()[order, 0]
+rate_sorted = rate_test.to_numpy()[order]
 
 plt.figure(figsize=(8,5))
 for j in range(P):
