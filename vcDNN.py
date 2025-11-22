@@ -51,7 +51,6 @@ Ytrain = torch.tensor(rate_train.to_numpy()).float()
 Yval = torch.tensor(rate_val.to_numpy()).float()
 Ytest = torch.tensor(rate_test.to_numpy()).float()
 
-X_sub = X_sub
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
@@ -62,7 +61,7 @@ for epoch in range(2000):
     opt.zero_grad()
 
     vc_train_pred = model(Xtrain)                 # [N_train, P]
-    rate_pred     = rate_fn(vc_train_pred, X_sub) # [N_train, n_subjects]
+    rate_pred = rate_fn(vc_train_pred, X_sub) # [N_train, n_subjects]
     loss = loss_fn(rate_pred, Ytrain)
 
     loss.backward()
