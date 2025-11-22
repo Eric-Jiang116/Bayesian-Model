@@ -5,10 +5,10 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 
-v  = pd.read_csv("v_pred.csv")      # v_pred
-vc = pd.read_csv("beta_pred.csv")   # (N, P), actual VC function values
-X_sub = pd.read_csv("X_sub.csv")    # (n_subjects, P)
-rate = pd.read_csv("r_pred.csv")    # (N, n_subjects)
+v  = pd.read_csv("v_pred.csv")    # v_pred
+vc = pd.read_csv("beta_pred.csv")  # (N, P), actual VC function values
+X_sub = pd.read_csv("X_sub.csv")   # (n_subjects, P)
+rate = pd.read_csv("r_pred.csv")   # (N, n_subjects)
 P  = vc.shape[1]
 
 # split 60/20/20
@@ -42,6 +42,7 @@ Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
 X_sub = torch.tensor(X_sub.to_numpy()).float()
 rate = torch.tensor(rate.to_numpy()).float()
 
+
 Xtrain = torch.tensor(Xtrain.to_numpy()).float()
 Xval = torch.tensor(Xval.to_numpy()).float()
 Xtest = torch.tensor(Xtest.to_numpy()).float()
@@ -50,6 +51,7 @@ Ytrain = torch.tensor(rate_train.to_numpy()).float()
 Yval = torch.tensor(rate_val.to_numpy()).float()
 Ytest = torch.tensor(rate_test.to_numpy()).float()
 
+X_sub = X_sub
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
