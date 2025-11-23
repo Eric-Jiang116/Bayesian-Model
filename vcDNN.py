@@ -9,13 +9,13 @@ v  = pd.read_csv("v_pred.csv")    # v_pred
 vc = pd.read_csv("beta_pred.csv")  # (N, P), actual VC function values
 X_sub = pd.read_csv("X_sub.csv")   # (n_subjects, P)
 rate = pd.read_csv("r_pred.csv")   # (N, n_subjects)
-P  = vc.shape[1]
+P = vc.shape[1]
 
 # split 60/20/20
 v_train, v_test, vc_train, vc_test, rate_train, rate_test = train_test_split(v, vc, rate, test_size=0.2, random_state=42)
 v_train, v_val, vc_train, vc_val, rate_train, rate_val = train_test_split(v_train, vc_train, rate_train, test_size=0.25, random_state=42)
 
-# scale with TRAIN ONLY
+# scale with TRAIN ONLY 
 v_mean, v_std = float(v_train.mean().iloc[0]), float(v_train.std().iloc[0])
 norm = lambda x: (x - v_mean) / (v_std)
 
@@ -72,8 +72,39 @@ for epoch in range(2000):
             rate_val = rate_fn(model(Xval), X_sub)
             val = loss_fn(rate_val, Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val:.6f}")
-
 model.eval()
+#MC dropout: evaluate on test set
+for m in model.modules():
+    if isinstance(m, nn.Dropout):
+        m.train()  # keep dropout on
+
+def mc_dropout_predict(model, X, n_samples=1000):
+    preds = []
+    for i in range(n_samples):
+        with torch.no_grad():
+            vc_pred = model(X)
+            rate_pred = rate_fn(vc_pred, X_sub)
+            preds.append(rate_pred)  # [1, N, n_subjects]
+    preds = torch.stack(preds, dim=0)
+
+    scalar_preds = preds.mean(dim=-1)  # [n_samples, N_test]
+
+    # mean over MC samples
+    mean_pred = scalar_preds.mean(dim=0)          # [N_test]
+
+    # 95% CI via percentiles over MC samples
+    lower_95 = torch.quantile(scalar_preds, 0.025, dim=0)  # [N_test]
+    upper_95 = torch.quantile(scalar_preds, 0.975, dim=0)  # [N_test]
+    return mean_pred, lower_95, upper_95, scalar_preds, preds
+
+mean_pred, lower, upper, preds, lol= mc_dropout_predict(model, Xtest)
+pred_np = preds.cpu().numpy()
+print(lol.shape[2])
+for j in range(len(lower)):
+    print(f"Test point {j + 1}: 95% CI = {(lower[j], upper[j])}\n")
+
+
+
 with torch.no_grad():
     vc_test_pred  = model(Xtest)                 # [N_test, P]
     rate_test_pred = rate_fn(vc_test_pred, X_sub)  # [N_test, n_subjects]
@@ -91,6 +122,7 @@ with torch.no_grad():
 order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
 v_sorted  = v_test.to_numpy()[order, 0]
 rate_sorted = rate_test.to_numpy()[order]
+
 
 plt.figure(figsize=(8,5))
 for j in range(P):
