@@ -33,7 +33,7 @@ def rate_fn(vc, X_sub):
     """
     beta: [N, P]
     X_sub: [n_subjects, P]
-    returns rate: [N, n_subjects]
+    returns rate: [N, n_subjects] returns 10 x 100 matrix
     """
     return torch.exp(vc @ X_sub.T) # transpose 
 
@@ -84,16 +84,16 @@ def mc_dropout_predict(model, X, n_samples=1000):
         with torch.no_grad():
             vc_pred = model(X)
             rate_pred = rate_fn(vc_pred, X_sub)
-            preds.append(rate_pred)  # [1, N, n_subjects]
-    preds = torch.stack(preds, dim=0)
-
-    scalar_preds = preds.mean(dim=-1)  # [n_samples, N_test]
+            preds.append(rate_pred)  # [1, N_test, n_subjects]
+    preds = torch.stack(preds, dim=0) # [n_samples, N_test, n_subjects]
+    print(preds.shape)
+    scalar_preds = preds.mean(dim=-1)  # [n_samples, N_test] 
 
     # mean over MC samples
-    mean_pred = scalar_preds.mean(dim=0)          # [N_test]
+    mean_pred = scalar_preds.mean(dim=0)          # [N_test] 
 
     # 95% CI via percentiles over MC samples
-    lower_95 = torch.quantile(scalar_preds, 0.025, dim=0)  # [N_test]
+    lower_95 = torch.quantile(scalar_preds, 0.025, dim=0)  # [N_test] percentiles of the mean predictions
     upper_95 = torch.quantile(scalar_preds, 0.975, dim=0)  # [N_test]
     return mean_pred, lower_95, upper_95, scalar_preds, preds
 
@@ -123,9 +123,8 @@ order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v
 v_sorted  = v_test.to_numpy()[order, 0]
 rate_sorted = rate_test.to_numpy()[order]
 
-
 plt.figure(figsize=(8,5))
-for j in range(P):
+for j in range(6):  # for each subject
     if j == 0:
         plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6, label="True (test)")
         plt.plot(v_grid[:, 0], rate_pred[:, j], label="Predicted")
