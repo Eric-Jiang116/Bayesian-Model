@@ -72,8 +72,9 @@ for epoch in range(2000):
             rate_val = rate_fn(model(Xval), X_sub)
             val = loss_fn(rate_val, Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val:.6f}")
+
 model.eval()
-#MC dropout: evaluate on test set
+# MC dropout: evaluate on test set
 for m in model.modules():
     if isinstance(m, nn.Dropout):
         m.train()  # keep dropout on
@@ -103,13 +104,12 @@ print(lol.shape[2])
 for j in range(len(lower)):
     print(f"Test point {j + 1}: 95% CI = {(lower[j], upper[j])}\n")
 
-
-
 with torch.no_grad():
     vc_test_pred  = model(Xtest)                 # [N_test, P]
     rate_test_pred = rate_fn(vc_test_pred, X_sub)  # [N_test, n_subjects]
     test_mse = loss_fn(rate_test_pred, Ytest).item()
 print(f"Test MSE: {test_mse}")
+
 # --- evaluate & plot properly ---
 vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0]) # plot only test range for interpolation
 v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
@@ -117,12 +117,15 @@ with torch.no_grad():
     vc_pred = model(torch.from_numpy(norm(v_grid)))
     rate_pred = rate_fn(vc_pred, X_sub).cpu().numpy()
 
-# Plot: use the full truth (sorted by v) and the smooth predicted line
-
+# Sort order of values
 order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
 v_sorted  = v_test.to_numpy()[order, 0]
 rate_sorted = rate_test.to_numpy()[order]
+mean_sorted = mean_pred.cpu().numpy()[order]
+lower_sorted = lower.cpu().numpy()[order]
+upper_sorted = upper.cpu().numpy()[order]
 
+# Plot predictions vs truth
 plt.figure(figsize=(8,5))
 for j in range(6):  # for each subject
     if j == 0:
@@ -132,5 +135,14 @@ for j in range(6):  # for each subject
         plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6)
         plt.plot(v_grid[:, 0], rate_pred[:, j])
 plt.xlabel("v"); plt.ylabel("rate values")
+plt.legend()
+plt.show()
+
+# Plot the mean rate + 95% CI
+plt.fill_between(v_sorted, lower_sorted, upper_sorted, color='lightblue', alpha=0.4, label='95% CI')
+plt.plot(v_sorted, mean_sorted, color='blue', label='Mean Rate')
+plt.xlabel("v")
+plt.ylabel("rate(v)")
+plt.title("Mean Subject-Weighted Rate Function with 95% MC Dropout CI")
 plt.legend()
 plt.show()
