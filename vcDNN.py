@@ -127,6 +127,7 @@ vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0]) # plot onl
 # upper_sorted = upper.cpu().numpy()[order]
 
 # ----- Integration ------
+model.eval() # disable dropout
 class RateODEFunc(nn.Module):
     '''
     Define an ODE function that calls our NN to compute exponential rate functions
@@ -153,7 +154,7 @@ step_size = (vmax - vmin) / (len(t) - 1)
 
 # Adaptive Solvers
 ref = odeint(ode_func, y0, t, method="dopri5", rtol=1e-3, atol=1e-5) # default (our standard reference)
-sol_bosh3 = odeint(ode_func, y0, t, method="bosh3",rtol=1e-3, atol=1e-5)
+sol_dopri8 = odeint(ode_func, y0, t, method="dopri8",rtol=1e-3, atol=1e-5)
 # Fixed-Step Solvers
 sol_euler = odeint(ode_func, y0, t, method="euler", options=dict(step_size = step_size))
 sol_rk4 = odeint(ode_func, y0, t, method="rk4", options=dict(step_size = step_size))
@@ -161,7 +162,7 @@ sol_rk4 = odeint(ode_func, y0, t, method="rk4", options=dict(step_size = step_si
 solutions = {
     "euler": sol_euler,
     "rk4": sol_rk4,
-    "bosh3": sol_bosh3,
+    "dopri8": sol_dopri8,
     "dopri5": ref,
 }
 # Compare solvers
@@ -171,7 +172,7 @@ for name, sol in solutions.items():
     print(f"{name:7s} | MSE vs dopri5 = {err:.3e}")
 
 print("Plot Solvers for Subject s")
-s = 15
+s = 37
 plt.figure(figsize=(8,5))
 for name, sol in solutions.items():
     plt.plot(t.numpy(), sol[:, s].detach().numpy(), label=name)
