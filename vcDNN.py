@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
+from torchdiffeq import odeint
 
 v  = pd.read_csv("v_pred.csv")    # v_pred
 vc = pd.read_csv("beta_pred.csv")  # (N, P), actual VC function values
@@ -98,51 +99,84 @@ def mc_dropout_predict(model, X, n_samples=1000):
     upper_95 = torch.quantile(scalar_preds, 0.975, dim=0)  # [N_test]
     return mean_pred, lower_95, upper_95, scalar_preds, preds
 
-mean_pred, lower, upper, preds, lol= mc_dropout_predict(model, Xtest)
-pred_np = preds.cpu().numpy()
-print(lol.shape[2])
-for j in range(len(lower)):
-    print(f"Test point {j + 1}: 95% CI = {(lower[j], upper[j])}\n")
+# mean_pred, lower, upper, preds, lol= mc_dropout_predict(model, Xtest)
+# pred_np = preds.cpu().numpy()
+# print(lol.shape[2])
+# for j in range(len(lower)):
+#     print(f"Test point {j + 1}: 95% CI = {(lower[j], upper[j])}\n")
 
-with torch.no_grad():
-    vc_test_pred  = model(Xtest)                 # [N_test, P]
-    rate_test_pred = rate_fn(vc_test_pred, X_sub)  # [N_test, n_subjects]
-    test_mse = loss_fn(rate_test_pred, Ytest).item()
-print(f"Test MSE: {test_mse}")
+# with torch.no_grad():
+#     vc_test_pred  = model(Xtest)                 # [N_test, P]
+#     rate_test_pred = rate_fn(vc_test_pred, X_sub)  # [N_test, n_subjects]
+#     test_mse = loss_fn(rate_test_pred, Ytest).item()
+# print(f"Test MSE: {test_mse}")
 
 # --- evaluate & plot properly ---
 vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0]) # plot only test range for interpolation
-v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
-with torch.no_grad():
-    vc_pred = model(torch.from_numpy(norm(v_grid)))
-    rate_pred = rate_fn(vc_pred, X_sub).cpu().numpy()
+# v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
+# with torch.no_grad():
+#     vc_pred = model(torch.from_numpy(norm(v_grid)))
+#     rate_pred = rate_fn(vc_pred, X_sub).cpu().numpy()
 
-# Sort order of values
-order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
-v_sorted  = v_test.to_numpy()[order, 0]
-rate_sorted = rate_test.to_numpy()[order]
-mean_sorted = mean_pred.cpu().numpy()[order]
-lower_sorted = lower.cpu().numpy()[order]
-upper_sorted = upper.cpu().numpy()[order]
+# Align order of values
+# order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
+# v_sorted  = v_test.to_numpy()[order, 0]
+# rate_sorted = rate_test.to_numpy()[order]
+# mean_sorted = mean_pred.cpu().numpy()[order]
+# lower_sorted = lower.cpu().numpy()[order]
+# upper_sorted = upper.cpu().numpy()[order]
 
-# Plot predictions vs truth
+# ----- Integration ------
+class RateODEFunc(nn.Module):
+    '''
+    Define an ODE function that calls our NN to compute exponential rate functions
+    '''
+    def __init__(self, model, X_sub):
+        super().__init__()
+        self.model = model
+        self.X_sub = X_sub
+    def forward(self, v, y):
+        '''
+        v: scalar tensor
+        y: amyloid accumulation [n_subjects]
+        returns dy/dv
+        '''
+        v_in = v.view(1,1)                   # shape [1, 1]
+        vc = self.model(norm(v_in))          # [1, P]
+        rate = torch.exp(vc @ self.X_sub.T)  # [1, n_subjects]
+        return rate.squeeze(0)               # [n_subjects]
+    
+t = torch.linspace(vmin, vmax, 200)    # time values [200]
+y0 = torch.zeros(X_sub.shape[0])       # initial y/accumulation values
+ode_func = RateODEFunc(model, X_sub)
+step_size = (vmax - vmin) / (len(t) - 1)
+
+# Adaptive Solvers
+ref = odeint(ode_func, y0, t, method="dopri5", rtol=1e-3, atol=1e-5) # default (our standard reference)
+sol_bosh3 = odeint(ode_func, y0, t, method="bosh3",rtol=1e-3, atol=1e-5)
+# Fixed-Step Solvers
+sol_euler = odeint(ode_func, y0, t, method="euler", options=dict(step_size = step_size))
+sol_rk4 = odeint(ode_func, y0, t, method="rk4", options=dict(step_size = step_size))
+
+solutions = {
+    "euler": sol_euler,
+    "rk4": sol_rk4,
+    "bosh3": sol_bosh3,
+    "dopri5": ref,
+}
+# Compare solvers
+print("MSE over trajectory")
+for name, sol in solutions.items():
+    err = torch.mean((sol - ref)**2).item()
+    print(f"{name:7s} | MSE vs dopri5 = {err:.3e}")
+
+print("Plot Solvers for Subject s")
+s = 15
 plt.figure(figsize=(8,5))
-for j in range(6):  # for each subject
-    if j == 0:
-        plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6, label="True (test)")
-        plt.plot(v_grid[:, 0], rate_pred[:, j], label="Predicted")
-    else:
-        plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6)
-        plt.plot(v_grid[:, 0], rate_pred[:, j])
-plt.xlabel("v"); plt.ylabel("rate values")
-plt.legend()
-plt.show()
-
-# Plot the mean rate + 95% CI
-plt.fill_between(v_sorted, lower_sorted, upper_sorted, color='lightblue', alpha=0.4, label='95% CI')
-plt.plot(v_sorted, mean_sorted, color='blue', label='Mean Rate')
+for name, sol in solutions.items():
+    plt.plot(t.numpy(), sol[:, s].detach().numpy(), label=name)
 plt.xlabel("v")
-plt.ylabel("rate(v)")
-plt.title("Mean Subject-Weighted Rate Function with 95% MC Dropout CI")
+plt.ylabel("Integrated rate")
+plt.title(f"Solver comparison – subject {s}")
 plt.legend()
 plt.show()
