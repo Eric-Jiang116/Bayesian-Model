@@ -4,19 +4,21 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-import time
 from torchdiffeq import odeint
 SEED = 42
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 
+out_data = pd.read_csv("out.data.csv")
 v  = pd.read_csv("v_pred.csv")    # v_pred
 vc = pd.read_csv("beta_pred.csv")  # (N, P), actual VC function values
 X_sub = pd.read_csv("X_sub.csv")   # (n_subjects, P)
 rate = pd.read_csv("r_pred.csv")   # (N, n_subjects)
 P = vc.shape[1]
+f = out_data["f"]                   #integrated rate value
+dage = out_data["dage"]             #true disease age
 
-# split 60/20/20
+# --------- TRAIN_VAL_TEST_SPLIT -----------
 v_train, v_test, vc_train, vc_test, rate_train, rate_test = train_test_split(v, vc, rate, test_size=0.2, random_state=42)
 v_train, v_val, vc_train, vc_val, rate_train, rate_val = train_test_split(v_train, vc_train, rate_train, test_size=0.25, random_state=42)
 
@@ -24,7 +26,7 @@ v_train, v_val, vc_train, vc_val, rate_train, rate_val = train_test_split(v_trai
 v_mean, v_std = float(v_train.mean().iloc[0]), float(v_train.std().iloc[0])
 norm = lambda x: (x - v_mean) / (v_std)
 
-# model
+# --------- DNN MODEL ------------
 def VCNet(P, hidden=(64,64), dropout=0.2):
     layers, in_dim = [], 1 # input is 1D: time variable
     for h in hidden:
@@ -33,7 +35,7 @@ def VCNet(P, hidden=(64,64), dropout=0.2):
     layers += [nn.Linear(in_dim, P)]
     return nn.Sequential(*layers)
 
-# rate function for training
+# --------- RATE FUNCTION ----------
 def rate_fn(vc, X_sub):
     """
     beta: [N, P]
@@ -60,7 +62,7 @@ model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
 
-# train
+# --------- TRAIN LOOP -----------
 for epoch in range(2000):
     model.train()
     opt.zero_grad()
@@ -84,6 +86,7 @@ for m in model.modules():
     if isinstance(m, nn.Dropout):
         m.train()  # keep dropout on
 
+# MCMC Dropout
 def mc_dropout_predict(model, X, n_samples=1000):
     preds = []
     for i in range(n_samples):
@@ -115,12 +118,21 @@ with torch.no_grad():
     test_mse = loss_fn(rate_test_pred, Ytest).item()
 print(f"Test MSE: {test_mse}")
 
-# --- evaluate & plot properly ---
+# --- Evaluate & Plot Rate vs Value Curves ---
 vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0]) # plot only test range for interpolation
 v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
 with torch.no_grad():
     vc_pred = model(torch.from_numpy(norm(v_grid)))
     rate_pred = rate_fn(vc_pred, X_sub).cpu().numpy()
+
+plt.figure(figsize=(8, 5))
+plt.plot(vc_pred[:, 0], rate_pred, lw=2)
+plt.xlabel("v_pred")
+plt.ylabel("Predicted Rate")
+plt.title("Rate vs Value Curve")
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
 
 # Align order of values
 # order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
@@ -133,24 +145,10 @@ with torch.no_grad():
 # ----- Integration ------
 model.eval() # disable dropout
 
-# Plot our rate functions for 5 subjects
 with torch.no_grad():
     vc_grid = model(torch.from_numpy(norm(v_grid)))
     # Get rates for ALL subjects at once
     rate_pred_all = rate_fn(vc_grid, X_sub).numpy() # Shape: [200, n_subjects]
-
-subjects = [0, 14, 23, 67, 89]
-
-plt.figure(figsize=(8, 5))
-for s in subjects:
-    plt.plot(v_grid[:, 0], rate_pred_all[:, s], lw=2, label=f"Subject {s}")
-
-plt.xlabel("v")
-plt.ylabel("Predicted Rate (dy/dv)")
-plt.title("Neural Network Output: Rate Functions Input to ODE Solver")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.show()
 
 class RateODEFunc(nn.Module):
     '''
@@ -176,22 +174,15 @@ y0 = torch.zeros(X_sub.shape[0])       # initial y/accumulation values
 ode_func = RateODEFunc(model, X_sub)
 step_size = 0.25
 
-# ----- ODE SOLVERS ---
+# Ode solvers
 sol_euler = odeint(ode_func, y0, t, method="euler", options=dict(step_size = step_size))
 sol_rk4 = odeint(ode_func, y0, t, method="rk4", options=dict(step_size = step_size))
 
-solutions = {
-    "euler": sol_euler,
-    "rk4": sol_rk4
-}
-
-# --- 2. TRAJECTORY & RESIDUAL PLOTS ---
-plt.figure(figsize=(8,5))
-for s in subjects:
-    for name, sol in solutions.items():
-        plt.plot(t.numpy(), sol[:, s].detach().numpy()) # use ** to unpack styles dict
-    plt.xlabel("v")
-    plt.ylabel("Integrated rate")
-    plt.title(f"Solver comparison – subject {s}")
-    plt.legend()
-    plt.show()
+# # Plot integrated curves
+# plt.figure(figsize=(8,5))
+# plt.plot(dage, sol_euler.detach().numpy())
+# plt.xlabel("Disease Age")
+# plt.ylabel("Integrated rate")
+# plt.title(f"Euler Integration of rate vs value curves")
+# plt.legend()
+# plt.show()
