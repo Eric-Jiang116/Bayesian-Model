@@ -125,15 +125,6 @@ with torch.no_grad():
     vc_pred = model(torch.from_numpy(norm(v_grid)))
     rate_pred = rate_fn(vc_pred, X_sub).cpu().numpy()
 
-plt.figure(figsize=(8, 5))
-plt.plot(vc_pred[:, 0], rate_pred, lw=2)
-plt.xlabel("v_pred")
-plt.ylabel("Predicted Rate")
-plt.title("Rate vs Value Curve")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.show()
-
 # Align order of values
 # order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
 # v_sorted  = v_test.to_numpy()[order, 0]
@@ -149,7 +140,21 @@ with torch.no_grad():
     vc_grid = model(torch.from_numpy(norm(v_grid)))
     # Get rates for ALL subjects at once
     rate_pred_all = rate_fn(vc_grid, X_sub).numpy() # Shape: [200, n_subjects]
+plt.figure(figsize=(9, 6))
 
+for s in range(rate_pred_all.shape[1]):  # all subjects
+    plt.plot(
+        v_grid[:, 0],
+        rate_pred_all[:, s],
+        alpha=0.2,      # IMPORTANT: transparency
+        lw=1
+    )
+
+plt.xlabel("v")
+plt.ylabel("Predicted Rate (dv/dt)")
+plt.title("Rate vs v_pred — All Subjects")
+plt.grid(True, alpha=0.3)
+plt.show()
 class RateODEFunc(nn.Module):
     '''
     Define an ODE function that calls our NN to compute exponential rate functions
@@ -167,7 +172,7 @@ class RateODEFunc(nn.Module):
         v_in = v.view(1,1)                   # shape [1, 1]
         vc = self.model(norm(v_in))          # [1, P]
         rate = torch.exp(vc @ self.X_sub.T)  # [1, n_subjects]
-        return rate.squeeze(0)               # [n_subjects]
+        return rate * torch.ones_like(y)       # [n_subjects]
     
 t = torch.linspace(vmin, vmax, 200)    # update time
 y0 = torch.zeros(X_sub.shape[0])       # initial y/accumulation values
@@ -177,12 +182,3 @@ step_size = 0.25
 # Ode solvers
 sol_euler = odeint(ode_func, y0, t, method="euler", options=dict(step_size = step_size))
 sol_rk4 = odeint(ode_func, y0, t, method="rk4", options=dict(step_size = step_size))
-
-# # Plot integrated curves
-# plt.figure(figsize=(8,5))
-# plt.plot(dage, sol_euler.detach().numpy())
-# plt.xlabel("Disease Age")
-# plt.ylabel("Integrated rate")
-# plt.title(f"Euler Integration of rate vs value curves")
-# plt.legend()
-# plt.show()
