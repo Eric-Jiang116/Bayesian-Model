@@ -15,13 +15,16 @@ vc = pd.read_csv("beta_pred.csv")  # (N, P), actual VC function values
 X_sub = pd.read_csv("X_sub.csv")   # (n_subjects, P)
 rate = pd.read_csv("r_pred.csv")   # (N, n_subjects)
 P = vc.shape[1]
-f = out_data["f"]                   # f_pred = integrated rate value
+f = pd.read_csv("f_pred.csv")       # f_pred = integrated rate value
 dage = out_data["dage"]             #true disease age
 t = out_data["t"]
 
 # --------- TRAIN_VAL_TEST_SPLIT -----------
-v_train, v_test, vc_train, vc_test, f_train, f_test = train_test_split(v, vc, f, test_size=0.2, random_state=42)
-v_train, v_val, vc_train, vc_val, f_train, f_val = train_test_split(v_train, vc_train, f_train, test_size=0.25, random_state=42)
+v_train, v_test, vc_train, vc_test = train_test_split(v, vc, test_size=0.2, random_state=42)
+v_train, v_val, vc_train, vc_val = train_test_split(v_train, vc_train, test_size=0.25, random_state=42)
+
+f_train, f_test = train_test_split(f, test_size=0.2, random_state=42)
+f_train, f_val = train_test_split(f_train, test_size=0.25, random_state=42)
 
 # scale with TRAIN ONLY 
 v_mean, v_std = float(v_train.mean().iloc[0]), float(v_train.std().iloc[0])
@@ -56,7 +59,7 @@ def ode_fn(v, t, model, X_sub):
 
 Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
 
-# convert to tensor
+# ------- CONVERT INPUT & OUTPUTS INTO TENSOR --------
 X_sub = torch.tensor(X_sub.to_numpy()).float()
 integrated_rate = torch.tensor(f.to_numpy()).float()
 
@@ -68,6 +71,7 @@ Ytrain = torch.tensor(f_train.to_numpy()).float()
 Yval = torch.tensor(f_val.to_numpy()).float()
 Ytest = torch.tensor(f_test.to_numpy()).float()
 
+# --------- INITIALIZE ----------
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
@@ -133,12 +137,24 @@ with torch.no_grad():
 print(f"Test MSE: {test_mse}")
 
 # --- Evaluate & Plot Rate vs Value Curves ---
-
+vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0]) # plot only test range for interpolation
 v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
+model.eval()
 with torch.no_grad():
     vc_pred = model(torch.from_numpy(norm(v_grid)))
     rate_pred = ode_fn(vc_pred, X_sub).cpu().numpy()
     ode_pred = odeint(rate_pred, y0, t, method="euler", options=dict(step_size = 0.25))
+
+ode_solution = ode_pred.detach().numpy()
+plt.figure(figsize=(8,5))
+for i in range(ode_solution.shape[1]):       # loop over subjects
+    plt.plot(dage.numpy(), ode_solution[:, i], label=f"Subject {i+1}")
+
+plt.xlabel("Disease Age")
+plt.ylabel("ODE Solution / Accumulated Rate")
+plt.title("ODE Trajectories per Subject")
+plt.legend()
+plt.show()
 
 # Align order of values
 # order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
@@ -148,25 +164,25 @@ with torch.no_grad():
 # lower_sorted = lower.cpu().numpy()[order]
 # upper_sorted = upper.cpu().numpy()[order]
 
-# ----- Integration ------
-model.eval() # disable dropout
+# # ----- Integration ------
+# model.eval() # disable dropout
 
-with torch.no_grad():
-    vc_grid = model(torch.from_numpy(norm(v_grid)))
-    # Get rates for ALL subjects at once
-    rate_pred_all = rate_fn(vc_grid, X_sub).numpy() # Shape: [200, n_subjects]
-plt.figure(figsize=(9, 6))
+# with torch.no_grad():
+#     vc_grid = model(torch.from_numpy(norm(v_grid)))
+#     # Get rates for ALL subjects at once
+#     rate_pred_all = rate_fn(vc_grid, X_sub).numpy() # Shape: [200, n_subjects]
+# plt.figure(figsize=(9, 6))
 
-for s in range(rate_pred_all.shape[1]):  # all subjects
-    plt.plot(
-        v_grid[:, 0],
-        rate_pred_all[:, s],
-        alpha=0.2, 
-        lw=1
-    )
+# # for s in range(rate_pred_all.shape[1]):  # all subjects
+# #     plt.plot(
+# #         v_grid[:, 0],
+# #         rate_pred_all[:, s],
+# #         alpha=0.2, 
+# #         lw=1
+# #     )
 
-plt.xlabel("v")
-plt.ylabel("Predicted Rate (dv/dt)")
-plt.title("Rate vs v_pred — All Subjects")
-plt.grid(True, alpha=0.3)
-plt.show()
+# plt.xlabel("v")
+# plt.ylabel("Predicted Rate (dv/dt)")
+# plt.title("Rate vs v_pred — All Subjects")
+# plt.grid(True, alpha=0.3)
+# plt.show()
