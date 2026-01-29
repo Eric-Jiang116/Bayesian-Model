@@ -9,14 +9,13 @@ SEED = 42
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 
-out_data = pd.read_csv("out.data.csv")
-v  = pd.read_csv("v_pred.csv")    # v_pred
-vc = pd.read_csv("beta_pred.csv")  # (N, P), actual VC function values
-X_sub = pd.read_csv("X_sub.csv")   # (n_subjects, P)
-rate = pd.read_csv("r_pred.csv")   # (N, n_subjects)
+v  = pd.read_csv("data/v_pred.csv")    # v_pred (50)
+vc = pd.read_csv("data/beta_pred.csv")  # (N, P), actual VC function values (50, 4)
+X_sub = pd.read_csv("data/X_sub.csv")   # (n_subjects, P) = (1000, 4)
+rate = pd.read_csv("data/r_pred.csv")   # (N, n_subjects) = (50, 1000)
 P = vc.shape[1]
-f = pd.read_csv("f_pred.csv")       # f_pred = integrated rate value
-dage = pd.read_csv("dage.csv")      # true disease age
+f = pd.read_csv("data/f_pred.csv")       # f_pred = integrated rate value (250, 1000)
+dage = pd.read_csv("data/dage.csv")      # true disease age (250)
 
 # --------- TRAIN_VAL_TEST_SPLIT -----------
 v_train, v_test, vc_train, vc_test = train_test_split(v, vc, test_size=0.2, random_state=42)
@@ -48,12 +47,12 @@ def rate_fn(vc, X_sub):
     return torch.exp(vc @ X_sub.T) # transpose 
 
 # --------- ODE SOLVER FUNC ------
-def ode_fn(v, t, model, X_sub):
+def ode_fn(v, t, vc, X_sub):
     """
     v: [n_subjects]
     returns dv/dt: [n_subjects]
     """
-    rate = torch.exp(model @ X_sub.T).diag()  # [1, n_subjects]
+    rate = torch.exp(vc @ X_sub.T).diag()  # [1, n_subjects]
     return rate  # [n_subjects, 1], use own covariate
 
 Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
@@ -83,8 +82,7 @@ for epoch in range(2000):
     opt.zero_grad()
 
     vc_train_pred = model(Xtrain)                 # [N_train, P]
-    rate_pred = ode_fn(v, t, vc_train_pred, X_sub)
-    ode_pred = odeint(rate_pred, y0, t, method="euler", options=dict(step_size = 0.25))
+    ode_pred = odeint(lambda v, t: ode_fn(v, t, vc_train_pred, X_sub), y0, t, method="euler", options=dict(step_size = 0.25))
     loss = loss_fn(ode_pred, Ytrain)
     loss.backward()
     opt.step()
