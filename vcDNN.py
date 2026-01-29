@@ -15,12 +15,13 @@ vc = pd.read_csv("beta_pred.csv")  # (N, P), actual VC function values
 X_sub = pd.read_csv("X_sub.csv")   # (n_subjects, P)
 rate = pd.read_csv("r_pred.csv")   # (N, n_subjects)
 P = vc.shape[1]
-f = out_data["f"]                   #integrated rate value
+f = out_data["f"]                   # f_pred = integrated rate value
 dage = out_data["dage"]             #true disease age
+t = out_data["t"]
 
 # --------- TRAIN_VAL_TEST_SPLIT -----------
-v_train, v_test, vc_train, vc_test, rate_train, rate_test = train_test_split(v, vc, rate, test_size=0.2, random_state=42)
-v_train, v_val, vc_train, vc_val, rate_train, rate_val = train_test_split(v_train, vc_train, rate_train, test_size=0.25, random_state=42)
+v_train, v_test, vc_train, vc_test, f_train, f_test = train_test_split(v, vc, f, test_size=0.2, random_state=42)
+v_train, v_val, vc_train, vc_val, f_train, f_val = train_test_split(v_train, vc_train, f_train, test_size=0.25, random_state=42)
 
 # scale with TRAIN ONLY 
 v_mean, v_std = float(v_train.mean().iloc[0]), float(v_train.std().iloc[0])
@@ -44,23 +45,33 @@ def rate_fn(vc, X_sub):
     """
     return torch.exp(vc @ X_sub.T) # transpose 
 
+# --------- ODE SOLVER FUNC ------
+def ode_fn(v, t, model, X_sub):
+    """
+    v: [n_subjects]
+    returns dv/dt: [n_subjects]
+    """
+    rate = torch.exp(model @ X_sub.T).diag()  # [1, n_subjects]
+    return rate  # [n_subjects, 1], use own covariate
+
 Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
+
 # convert to tensor
 X_sub = torch.tensor(X_sub.to_numpy()).float()
-rate = torch.tensor(rate.to_numpy()).float()
-
+integrated_rate = torch.tensor(f.to_numpy()).float()
 
 Xtrain = torch.tensor(Xtrain.to_numpy()).float()
 Xval = torch.tensor(Xval.to_numpy()).float()
 Xtest = torch.tensor(Xtest.to_numpy()).float()
 
-Ytrain = torch.tensor(rate_train.to_numpy()).float()
-Yval = torch.tensor(rate_val.to_numpy()).float()
-Ytest = torch.tensor(rate_test.to_numpy()).float()
+Ytrain = torch.tensor(f_train.to_numpy()).float()
+Yval = torch.tensor(f_val.to_numpy()).float()
+Ytest = torch.tensor(f_test.to_numpy()).float()
 
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
+y0 = torch.zeros(X_sub.shape[0])       # initial y/accumulation values
 
 # --------- TRAIN LOOP -----------
 for epoch in range(2000):
@@ -68,16 +79,17 @@ for epoch in range(2000):
     opt.zero_grad()
 
     vc_train_pred = model(Xtrain)                 # [N_train, P]
-    rate_pred = rate_fn(vc_train_pred, X_sub) # [N_train, n_subjects]
-    loss = loss_fn(rate_pred, Ytrain)
-
+    rate_pred = ode_fn(v, t, vc_train_pred, X_sub)
+    ode_pred = odeint(rate_pred, y0, t, method="euler", options=dict(step_size = 0.25))
+    loss = loss_fn(ode_pred, Ytrain)
     loss.backward()
     opt.step()
+
     if epoch % 200 == 0:
         model.eval()
         with torch.no_grad():
-            rate_val = rate_fn(model(Xval), X_sub)
-            val = loss_fn(rate_val, Yval).item()
+            integrated_val = rate_fn(model(Xval), X_sub)
+            val = loss_fn(integrated_val, Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val:.6f}")
 
 model.eval()
@@ -86,14 +98,15 @@ for m in model.modules():
     if isinstance(m, nn.Dropout):
         m.train()  # keep dropout on
 
-# MCMC Dropout
+# MCMC Dropout (need to be updated)
 def mc_dropout_predict(model, X, n_samples=1000):
     preds = []
     for i in range(n_samples):
         with torch.no_grad():
             vc_pred = model(X)
-            rate_pred = rate_fn(vc_pred, X_sub)
-            preds.append(rate_pred)  # [1, N_test, n_subjects]
+            rate_pred = ode_fn(v, t, vc_pred, X_sub)
+            ode_pred = odeint(rate_pred, y0, t, method="euler", options=dict(step_size = 0.25))
+            preds.append(ode_pred) 
     preds = torch.stack(preds, dim=0) # [n_samples, N_test, n_subjects]
     print(preds.shape)
     scalar_preds = preds.mean(dim=-1)  # [n_samples, N_test] 
@@ -114,16 +127,18 @@ for j in range(len(lower)):
 
 with torch.no_grad():
     vc_test_pred  = model(Xtest)                 # [N_test, P]
-    rate_test_pred = rate_fn(vc_test_pred, X_sub)  # [N_test, n_subjects]
-    test_mse = loss_fn(rate_test_pred, Ytest).item()
+    rate_test_pred = ode_fn(v, t, vc_test_pred, X_sub)  # [N_test, n_subjects]
+    ode_test_pred = odeint(rate_test_pred, y0, t, method="euler", options=dict(step_size = 0.25))
+    test_mse = loss_fn(ode_test_pred, Ytest).item()
 print(f"Test MSE: {test_mse}")
 
 # --- Evaluate & Plot Rate vs Value Curves ---
-vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0]) # plot only test range for interpolation
+
 v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
 with torch.no_grad():
     vc_pred = model(torch.from_numpy(norm(v_grid)))
-    rate_pred = rate_fn(vc_pred, X_sub).cpu().numpy()
+    rate_pred = ode_fn(vc_pred, X_sub).cpu().numpy()
+    ode_pred = odeint(rate_pred, y0, t, method="euler", options=dict(step_size = 0.25))
 
 # Align order of values
 # order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
@@ -146,7 +161,7 @@ for s in range(rate_pred_all.shape[1]):  # all subjects
     plt.plot(
         v_grid[:, 0],
         rate_pred_all[:, s],
-        alpha=0.2,      # IMPORTANT: transparency
+        alpha=0.2, 
         lw=1
     )
 
@@ -155,30 +170,3 @@ plt.ylabel("Predicted Rate (dv/dt)")
 plt.title("Rate vs v_pred — All Subjects")
 plt.grid(True, alpha=0.3)
 plt.show()
-class RateODEFunc(nn.Module):
-    '''
-    Define an ODE function that calls our NN to compute exponential rate functions
-    '''
-    def __init__(self, model, X_sub):
-        super().__init__()
-        self.model = model
-        self.X_sub = X_sub
-    def forward(self, v, y):
-        '''
-        v: scalar tensor
-        y: amyloid accumulation [n_subjects]
-        returns dy/dv
-        '''
-        v_in = v.view(1,1)                   # shape [1, 1]
-        vc = self.model(norm(v_in))          # [1, P]
-        rate = torch.exp(vc @ self.X_sub.T)  # [1, n_subjects]
-        return rate * torch.ones_like(y)       # [n_subjects]
-    
-t = torch.linspace(vmin, vmax, 200)    # update time
-y0 = torch.zeros(X_sub.shape[0])       # initial y/accumulation values
-ode_func = RateODEFunc(model, X_sub)
-step_size = 0.25
-
-# Ode solvers
-sol_euler = odeint(ode_func, y0, t, method="euler", options=dict(step_size = step_size))
-sol_rk4 = odeint(ode_func, y0, t, method="rk4", options=dict(step_size = step_size))
