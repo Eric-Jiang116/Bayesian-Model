@@ -16,8 +16,7 @@ X_sub = pd.read_csv("X_sub.csv")   # (n_subjects, P)
 rate = pd.read_csv("r_pred.csv")   # (N, n_subjects)
 P = vc.shape[1]
 f = pd.read_csv("f_pred.csv")       # f_pred = integrated rate value
-dage = out_data["dage"]             #true disease age
-t = out_data["t"]
+dage = pd.read_csv("dage.csv")      # true disease age
 
 # --------- TRAIN_VAL_TEST_SPLIT -----------
 v_train, v_test, vc_train, vc_test = train_test_split(v, vc, test_size=0.2, random_state=42)
@@ -76,7 +75,8 @@ model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
 y0 = torch.zeros(X_sub.shape[0])       # initial y/accumulation values
-
+vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0])
+t = torch.linspace(vmin, vmax, 200)
 # --------- TRAIN LOOP -----------
 for epoch in range(2000):
     model.train()
