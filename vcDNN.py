@@ -111,6 +111,7 @@ with torch.no_grad():
 print(f"Test MSE: {test_mse}")
 
 # --- evaluate & plot properly ---
+model.eval()
 vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0]) # plot only test range for interpolation
 v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
 with torch.no_grad():
@@ -125,24 +126,40 @@ mean_sorted = mean_pred.cpu().numpy()[order]
 lower_sorted = lower.cpu().numpy()[order]
 upper_sorted = upper.cpu().numpy()[order]
 
-# Plot predictions vs truth
-plt.figure(figsize=(8,5))
-for j in range(6):  # for each subject
-    if j == 0:
-        plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6, label="True (test)")
-        plt.plot(v_grid[:, 0], rate_pred[:, j], label="Predicted")
-    else:
-        plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6)
-        plt.plot(v_grid[:, 0], rate_pred[:, j])
-plt.xlabel("v"); plt.ylabel("rate values")
-plt.legend()
+# # Plot predictions vs truth
+# plt.figure(figsize=(8,5))
+# for j in range(6):  # for each subject
+#     if j == 0:
+#         plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6, label="True (test)")
+#         plt.plot(v_grid[:, 0], rate_pred[:, j], label="Predicted")
+#     else:
+#         plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6)
+#         plt.plot(v_grid[:, 0], rate_pred[:, j])
+# plt.xlabel("v"); plt.ylabel("rate values")
+# plt.legend()
+# plt.show()
+
+plt.figure(figsize=(9, 6))
+
+for s in range(rate_pred.shape[1]):  # all subjects
+    plt.plot(
+        v_grid[:, 0],
+        rate_pred[:, s],
+        alpha=0.2,      # IMPORTANT: transparency
+        lw=1
+    )
+
+plt.xlabel("v")
+plt.ylabel("Predicted Rate")
+plt.title("Rate vs v_pred — All Subjects")
+plt.grid(True, alpha=0.3)
 plt.show()
 
-# Plot the mean rate + 95% CI
-plt.fill_between(v_sorted, lower_sorted, upper_sorted, color='lightblue', alpha=0.4, label='95% CI')
-plt.plot(v_sorted, mean_sorted, color='blue', label='Mean Rate')
-plt.xlabel("v")
-plt.ylabel("rate(v)")
-plt.title("Mean Subject-Weighted Rate Function with 95% MC Dropout CI")
-plt.legend()
-plt.show()
+# # Plot the mean rate + 95% CI
+# plt.fill_between(v_sorted, lower_sorted, upper_sorted, color='lightblue', alpha=0.4, label='95% CI')
+# plt.plot(v_sorted, mean_sorted, color='blue', label='Mean Rate')
+# plt.xlabel("v")
+# plt.ylabel("rate(v)")
+# plt.title("Mean Subject-Weighted Rate Function with 95% MC Dropout CI")
+# plt.legend()
+# plt.show()
