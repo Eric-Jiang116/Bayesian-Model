@@ -37,16 +37,7 @@ def VCNet(P, hidden=(64,64), dropout=0.2):
     layers += [nn.Linear(in_dim, P)]
     return nn.Sequential(*layers)
 
-# --------- RATE FUNCTION ----------
-def rate_fn(vc, X_sub):
-    """
-    beta: [n_points, P]
-    X_sub: [n_subjects, P]
-    returns rate: [n_points, n_subjects] returns 10 x 100 matrix
-    """
-    return torch.exp(vc @ X_sub.T) # transpose 
-
-# --------- ODE SOLVER FUNC ------
+# --------- ODE SOLVER FUNC (RATE FUNC) ------
 def ode_fn(v, f, model, X_sub):
     v_in = v.view(1, 1)      
     vc = model(v_in)                   
@@ -73,7 +64,7 @@ model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
 y0 = torch.zeros(X_sub.shape[0])       # initial y/accumulation values
-vmin, vmax = float(v_train.min().iloc[0]), float(v_train.max().iloc[0])
+vmin, vmax = float(Xtrain.min().iloc[0]), float(Xtrain.max().iloc[0])
 t = torch.linspace(vmin, vmax, 200)
 
 # --------- TRAIN LOOP -----------
