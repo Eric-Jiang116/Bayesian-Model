@@ -10,12 +10,12 @@ torch.manual_seed(SEED)
 np.random.seed(SEED)
 
 v  = pd.read_csv("data/v_pred.csv")    # v_pred (50)
-vc = pd.read_csv("data/beta_pred.csv")  # (N, P), actual VC function values (50, 4)
+vc = pd.read_csv("data/beta_pred.csv")  # (n_points, P), actual VC function values (50, 4)
 X_sub = pd.read_csv("data/X_sub.csv")   # (n_subjects, P) = (1000, 4)
-rate = pd.read_csv("data/r_pred.csv")   # (N, n_subjects) = (50, 1000)
-P = vc.shape[1]
-f = pd.read_csv("data/f_pred.csv")       # f_pred = integrated rate value (250, 1000)
-dage = pd.read_csv("data/dage.csv")      # true disease age (250)
+rate = pd.read_csv("data/r_pred.csv")   # (n_points, n_subjects) = (50, 1000)
+P = vc.shape[1]                         # number of variables
+f = pd.read_csv("data/f_pred.csv")       # integrated rate (n_points of integration, n_subjects) = (250, 1000)
+dage = pd.read_csv("data/dage.csv")      # disease age (250)
 
 # --------- TRAIN_VAL_TEST_SPLIT -----------
 v_train, v_test, vc_train, vc_test = train_test_split(v, vc, test_size=0.2, random_state=42)
@@ -40,26 +40,25 @@ def VCNet(P, hidden=(64,64), dropout=0.2):
 # --------- RATE FUNCTION ----------
 def rate_fn(vc, X_sub):
     """
-    beta: [N, P]
+    beta: [n_points, P]
     X_sub: [n_subjects, P]
-    returns rate: [N, n_subjects] returns 10 x 100 matrix
+    returns rate: [n_points, n_subjects] returns 10 x 100 matrix
     """
     return torch.exp(vc @ X_sub.T) # transpose 
 
 # --------- ODE SOLVER FUNC ------
-def ode_fn(v, t, vc, X_sub):
-    """
-    v: [n_subjects]
-    returns dv/dt: [n_subjects]
-    """
-    rate = torch.exp(vc @ X_sub.T).diag()  # [1, n_subjects]
-    return rate  # [n_subjects, 1], use own covariate
+def ode_fn(v, f, model, X_sub):
+    v_in = v.view(1, 1)      
+    vc = model(v_in)                   
+    rate = torch.exp(vc @ X_sub.T).squeeze(0) 
+    return rate  # [n_subjects]
 
 Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
 
 # ------- CONVERT INPUT & OUTPUTS INTO TENSOR --------
 X_sub = torch.tensor(X_sub.to_numpy()).float()
 integrated_rate = torch.tensor(f.to_numpy()).float()
+dage = torch.tensor(dage.to_numpy()).float()
 
 Xtrain = torch.tensor(Xtrain.to_numpy()).float()
 Xval = torch.tensor(Xval.to_numpy()).float()
@@ -74,15 +73,14 @@ model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
 y0 = torch.zeros(X_sub.shape[0])       # initial y/accumulation values
-vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0])
+vmin, vmax = float(v_train.min().iloc[0]), float(v_train.max().iloc[0])
 t = torch.linspace(vmin, vmax, 200)
+
 # --------- TRAIN LOOP -----------
 for epoch in range(2000):
     model.train()
     opt.zero_grad()
-
-    vc_train_pred = model(Xtrain)                 # [N_train, P]
-    ode_pred = odeint(lambda v, t: ode_fn(v, t, vc_train_pred, X_sub), y0, t, method="euler", options=dict(step_size = 0.25))
+    ode_pred = odeint(lambda v, f: ode_fn(v, f, model, X_sub), y0=y0, t=t, method="rk4", options=dict(step_size = 0.25))
     loss = loss_fn(ode_pred, Ytrain)
     loss.backward()
     opt.step()
@@ -90,8 +88,8 @@ for epoch in range(2000):
     if epoch % 200 == 0:
         model.eval()
         with torch.no_grad():
-            integrated_val = rate_fn(model(Xval), X_sub)
-            val = loss_fn(integrated_val, Yval).item()
+            ode_pred = odeint(lambda v, t: ode_fn(v, t, model, X_sub), y0, t, method="rk4", options=dict(step_size = 0.25))
+            val = loss_fn(ode_pred, Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val:.6f}")
 
 model.eval()
@@ -105,9 +103,7 @@ def mc_dropout_predict(model, X, n_samples=1000):
     preds = []
     for i in range(n_samples):
         with torch.no_grad():
-            vc_pred = model(X)
-            rate_pred = ode_fn(v, t, vc_pred, X_sub)
-            ode_pred = odeint(rate_pred, y0, t, method="euler", options=dict(step_size = 0.25))
+            ode_pred = odeint(lambda v, t: ode_fn(v, t, model, X_sub), y0, t, method="rk4", options=dict(step_size = 0.25))
             preds.append(ode_pred) 
     preds = torch.stack(preds, dim=0) # [n_samples, N_test, n_subjects]
     print(preds.shape)
@@ -127,10 +123,8 @@ print(lol.shape[2])
 for j in range(len(lower)):
     print(f"Test point {j + 1}: 95% CI = {(lower[j], upper[j])}\n")
 
-with torch.no_grad():
-    vc_test_pred  = model(Xtest)                 # [N_test, P]
-    rate_test_pred = ode_fn(v, t, vc_test_pred, X_sub)  # [N_test, n_subjects]
-    ode_test_pred = odeint(rate_test_pred, y0, t, method="euler", options=dict(step_size = 0.25))
+with torch.no_grad():        
+    ode_test_pred = odeint(lambda v, t: ode_fn(v, t, model, X_sub), y0, t, method="rk4", options=dict(step_size = 0.25))
     test_mse = loss_fn(ode_test_pred, Ytest).item()
 print(f"Test MSE: {test_mse}")
 
