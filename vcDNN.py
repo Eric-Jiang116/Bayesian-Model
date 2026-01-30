@@ -9,6 +9,8 @@ SEED = 42
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 
+# ------- LOAD DATA --------
+
 v  = pd.read_csv("data/v_pred.csv")    # v_pred (50)
 vc = pd.read_csv("data/beta_pred.csv")  # (n_points, P), actual VC function values (50, 4)
 X_sub = pd.read_csv("data/X_sub.csv")   # (n_subjects, P) = (1000, 4)
