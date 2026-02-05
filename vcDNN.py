@@ -5,19 +5,21 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 
-v  = pd.read_csv("data/v_pred.csv")    # v_pred
+v  = pd.read_csv("data/v_pred.csv")    # v_pred (50, 1)
 vc = pd.read_csv("data/beta_pred.csv")  # (N, P), actual VC function values
-X_sub = pd.read_csv("data/Xsub.csv")   # (n_subjects, P)
+Xsub = pd.read_csv("data/Xsub.csv")   # (n_subjects, P)
 rate = pd.read_csv("data/r_pred.csv")   # (N, n_subjects)
 P = vc.shape[1]
 
 # split 60/20/20
-v_train, v_test, vc_train, vc_test, rate_train, rate_test = train_test_split(v, vc, rate, test_size=0.2, random_state=42)
-v_train, v_val, vc_train, vc_val, rate_train, rate_val = train_test_split(v_train, vc_train, rate_train, test_size=0.25, random_state=42)
+# v_train, v_test, vc_train, vc_test, rate_train, rate_test = train_test_split(v, vc, rate, test_size=0.2, random_state=42)
+# v_train, v_val, vc_train, vc_val, rate_train, rate_val = train_test_split(v_train, vc_train, rate_train, test_size=0.25, random_state=42)
+Xsub_train, Xsub_test, rate_train, rate_test = train_test_split(Xsub, rate.T, test_size=0.2, random_state=42)
+Xsub_train, Xsub_val, rate_train, rate_val = train_test_split(Xsub_train, rate_train, test_size=0.25, random_state=42)
 
-# scale with TRAIN ONLY 
-v_mean, v_std = float(v_train.mean().iloc[0]), float(v_train.std().iloc[0])
-norm = lambda x: (x - v_mean) / (v_std)
+# # scale with TRAIN ONLY 
+#v_mean, v_std = float(v_train.mean().iloc[0]), float(v_train.std().iloc[0])
+# norm = lambda x: (x - v_mean) / (v_std)
 
 # model
 def VCNet(P, hidden=(64,64), dropout=0.2):
@@ -37,31 +39,32 @@ def rate_fn(vc, X_sub):
     """
     return torch.exp(vc @ X_sub.T) # transpose 
 
-Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
+# Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
 # convert to tensor
-X_sub = torch.tensor(X_sub.to_numpy()).float()
+X_sub = torch.tensor(Xsub.to_numpy()).float()
 rate = torch.tensor(rate.to_numpy()).float()
+v = torch.tensor(v.to_numpy()).float()
 
+Xtrain = torch.tensor(Xsub_train.to_numpy()).float()
+Xval = torch.tensor(Xsub_val.to_numpy()).float()
+Xtest = torch.tensor(Xsub_test.to_numpy()).float()
 
-Xtrain = torch.tensor(Xtrain.to_numpy()).float()
-Xval = torch.tensor(Xval.to_numpy()).float()
-Xtest = torch.tensor(Xtest.to_numpy()).float()
-
-Ytrain = torch.tensor(rate_train.to_numpy()).float()
-Yval = torch.tensor(rate_val.to_numpy()).float()
-Ytest = torch.tensor(rate_test.to_numpy()).float()
+Ytrain = torch.tensor(rate_train.to_numpy()).float().T
+Yval = torch.tensor(rate_val.to_numpy()).float().T
+Ytest = torch.tensor(rate_test.to_numpy()).float().T
 
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
 
+v_norm = (v - v.mean()) / v.std()
 # train
 for epoch in range(2000):
     model.train()
     opt.zero_grad()
 
-    vc_train_pred = model(Xtrain)                 # [N_train, P]
-    rate_pred = rate_fn(vc_train_pred, X_sub) # [N_train, n_subjects]
+    vc_train_pred = model(v_norm)                 # [N_train, P]
+    rate_pred = rate_fn(vc_train_pred, Xtrain) # [N_train, n_subjects]
     loss = loss_fn(rate_pred, Ytrain)
 
     loss.backward()
@@ -69,7 +72,7 @@ for epoch in range(2000):
     if epoch % 200 == 0:
         model.eval()
         with torch.no_grad():
-            rate_val = rate_fn(model(Xval), X_sub)
+            rate_val = rate_fn(model(v_norm), Xval)
             val = loss_fn(rate_val, Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val:.6f}")
 
@@ -83,8 +86,8 @@ def mc_dropout_predict(model, X, n_samples=1000):
     preds = []
     for i in range(n_samples):
         with torch.no_grad():
-            vc_pred = model(X)
-            rate_pred = rate_fn(vc_pred, X_sub)
+            vc_pred = model(v_norm)
+            rate_pred = rate_fn(vc_pred, Xtest)
             preds.append(rate_pred)  # [1, N_test, n_subjects]
     preds = torch.stack(preds, dim=0) # [n_samples, N_test, n_subjects]
     print(preds.shape)
@@ -105,22 +108,22 @@ for j in range(len(lower)):
     print(f"Test point {j + 1}: 95% CI = {(lower[j], upper[j])}\n")
 
 with torch.no_grad():
-    vc_test_pred  = model(Xtest)                 # [N_test, P]
-    rate_test_pred = rate_fn(vc_test_pred, X_sub)  # [N_test, n_subjects]
+    vc_test_pred  = model(v_norm)                 # [N_test, P]
+    rate_test_pred = rate_fn(vc_test_pred, Xtest)  # [N_test, n_subjects]
     test_mse = loss_fn(rate_test_pred, Ytest).item()
 print(f"Test MSE: {test_mse}")
 
 # --- evaluate & plot properly ---
 model.eval()
-vmin, vmax = float(v_test.min().iloc[0]), float(v_test.max().iloc[0]) # plot only test range for interpolation
-v_grid = np.linspace(vmin, vmax, 200).astype(np.float32).reshape(-1,1)
+vmin, vmax = float(v.min()), float(v.max()) # plot only test range for interpolation
+v_grid = np.linspace(vmin, vmax, 50).astype(np.float32).reshape(-1,1)
 with torch.no_grad():
-    vc_pred = model(torch.from_numpy(norm(v_grid)))
-    rate_pred = rate_fn(vc_pred, X_sub).cpu().numpy()
+    vc_pred = model(v_norm)
+    rate_pred = rate_fn(vc_pred, Xtest).cpu().numpy()
 
 # Sort order of values
-order = np.argsort(v_test.to_numpy()[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
-v_sorted  = v_test.to_numpy()[order, 0]
+order = np.argsort(v[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
+v_sorted  = v[order, 0]
 rate_sorted = rate_test.to_numpy()[order]
 mean_sorted = mean_pred.cpu().numpy()[order]
 lower_sorted = lower.cpu().numpy()[order]
