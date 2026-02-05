@@ -5,10 +5,10 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 
-v  = pd.read_csv("v_pred.csv")    # v_pred
-vc = pd.read_csv("beta_pred.csv")  # (N, P), actual VC function values
-X_sub = pd.read_csv("X_sub.csv")   # (n_subjects, P)
-rate = pd.read_csv("r_pred.csv")   # (N, n_subjects)
+v  = pd.read_csv("data/v_pred.csv")    # v_pred
+vc = pd.read_csv("data/beta_pred.csv")  # (N, P), actual VC function values
+X_sub = pd.read_csv("data/Xsub.csv")   # (n_subjects, P)
+rate = pd.read_csv("data/r_pred.csv")   # (N, n_subjects)
 P = vc.shape[1]
 
 # split 60/20/20
