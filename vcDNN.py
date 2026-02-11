@@ -1,20 +1,4 @@
 """
-Clean, aligned version of your pipeline:
-
-Goal:
-  Learn a varying-coefficient function beta(v) (P-dim) such that for each subject s:
-      df_s(v)/dv = exp( beta(v)^T x_s )
-  and the integrated curves f_s(v) match your provided targets f_pred (n_grid x n_subjects).
-
-Key fixes:
-  1) Use ONE grid consistently. If f_pred is on 250 points, we integrate on 250 points.
-  2) Split along the SAME axis you supervise on (the v-grid axis). (No independent split of f.)
-  3) Ensure odeint output shape matches targets: [n_grid, n_subjects].
-  4) Correct ode_fn signature and calls.
-  5) MC-dropout: sample predictions correctly and return mean/intervals with correct shapes.
-  6) Plotting: compute rate and integrated curves correctly.
-
-Assumptions:
   - f_pred rows correspond to the same "v-grid" as dage (length 250). If dage is disease-age,
     we treat it as the integration grid variable (call it v_grid) and use it in odeint.
   - X_sub has shape [n_subjects, P] = [1000, 4].
