@@ -34,7 +34,7 @@ Ytrain = torch.tensor(f.iloc[:, train_idx].to_numpy()).float()  # [250, 600]
 Yval = torch.tensor(f.iloc[:, val_idx].to_numpy()).float()      # [250, 200]
 Ytest = torch.tensor(f.iloc[:, test_idx].to_numpy()).float()    # [250, 200]
 
-# --------- DNN MODEL ------------
+# --------- DNN MODEL B(v) ------------
 def VCNet(P, hidden=(64,64), dropout=0.2):
     """
     Estimates varying coefficient functions β_r(v)
