@@ -1,8 +1,15 @@
 """
-  - f_pred rows correspond to the same "v-grid" as dage (length 250). If dage is disease-age,
-    we treat it as the integration grid variable (call it v_grid) and use it in odeint.
-  - X_sub has shape [n_subjects, P] = [1000, 4].
-  - f_pred has shape [n_grid, n_subjects] = [250, 1000].
+FIXED VERSION: split by SUBJECTS (columns), not by time/grid points.
+
+Why:
+- timepoints along `dage` are not i.i.d. samples; they are a structured grid for an ODE.
+- splitting timepoints makes `t_test` miss important reference points (like 0) and creates large gaps.
+- correct split is: train/val/test on subjects, while always using the full time grid.
+
+Data assumptions:
+- dage.csv -> (T,) with T=250, includes (or is near) 0
+- f_pred.csv -> (T, S) with S=1000 subjects
+- Xsub.csv -> (S, P) subject covariates (P=4)
 """
 
 from sklearn.model_selection import train_test_split
@@ -18,50 +25,48 @@ torch.manual_seed(SEED)
 np.random.seed(SEED)
 
 # ---------------- LOAD DATA ----------------
-v_50   = pd.read_csv("data/v_pred.csv")        # (50,1) or (50,)
-vc_50  = pd.read_csv("data/beta_pred.csv")     # (50,P) optional (not used for training unless you want)
-X_sub_df = pd.read_csv("data/Xsub.csv")       # (n_subjects,P)
-f_df   = pd.read_csv("data/f_pred.csv")        # (n_grid,n_subjects) = (250,1000)
-dage_df = pd.read_csv("data/dage.csv")         # (n_grid,1) or (n_grid,)
+X_sub_df = pd.read_csv("data/Xsub.csv")        # (S,P)
+f_df     = pd.read_csv("data/f_pred.csv")      # (T,S)
+dage_df  = pd.read_csv("data/dage.csv")        # (T,1) or (T,)
 
 # ---------------- BASIC SHAPES ----------------
-P = X_sub_df.shape[1]
-n_subjects = X_sub_df.shape[0]
+X_sub_np = X_sub_df.to_numpy().astype(np.float32)              # [S,P]
+f_np     = f_df.to_numpy().astype(np.float32)                  # [T,S]
+dage_np  = dage_df.to_numpy().reshape(-1).astype(np.float32)   # [T]
 
-# Ensure dage is a flat (n_grid,) vector
-dage_np = dage_df.to_numpy().reshape(-1).astype(np.float32)
-n_grid = len(dage_np)
+S, P = X_sub_np.shape
+T = len(dage_np)
 
-# Convert f to numpy float32: shape [n_grid, n_subjects]
-f_np = f_df.to_numpy().astype(np.float32)
-assert f_np.shape[0] == n_grid, f"f_pred has {f_np.shape[0]} rows but dage has {n_grid} points"
-assert f_np.shape[1] == n_subjects, f"f_pred has {f_np.shape[1]} subjects but X_sub has {n_subjects}"
+assert f_np.shape == (T, S), f"Expected f_pred shape {(T,S)} but got {f_np.shape}"
 
-# Convert X_sub: shape [n_subjects, P]
-X_sub = torch.tensor(X_sub_df.to_numpy().astype(np.float32))  # [S,P]
+# Torch tensors
+X_sub_all = torch.tensor(X_sub_np)                 # [S,P]
+Y_all     = torch.tensor(f_np)                     # [T,S]
+t_full    = torch.tensor(dage_np)                  # [T]
 
-# ---------------- TRAIN/VAL/TEST SPLIT (ALIGNED) ----------------
-# Split indices along the grid axis (rows of f, entries of dage)
-idx = np.arange(n_grid)
-idx_train, idx_test = train_test_split(idx, test_size=0.2, random_state=SEED, shuffle=True)
-idx_train, idx_val  = train_test_split(idx_train, test_size=0.25, random_state=SEED, shuffle=True)  # 0.25 of 0.8 -> 0.2
+# Optional: check nearest gridpoint to 0
+i0 = torch.argmin(torch.abs(t_full - 0.0))
+print("Nearest gridpoint to 0:", float(t_full[i0].item()))
 
-# Create torch grids and targets for each split
-# IMPORTANT: odeint expects t sorted increasing (best practice). We'll sort within each split.
-def make_split(split_idx):
-    split_idx = np.sort(split_idx)
-    t_split = torch.tensor(dage_np[split_idx], dtype=torch.float32)                 # [T_split]
-    y_split = torch.tensor(f_np[split_idx, :], dtype=torch.float32)                # [T_split, S]
-    return t_split, y_split, split_idx
+# ---------------- SPLIT BY SUBJECTS ----------------
+sub_idx = np.arange(S)
+sub_train, sub_test = train_test_split(sub_idx, test_size=0.2, random_state=SEED, shuffle=True)
+sub_train, sub_val  = train_test_split(sub_train, test_size=0.25, random_state=SEED, shuffle=True)  # 0.25 of 0.8 -> 0.2
 
-t_train, Ytrain, idx_train_sorted = make_split(idx_train)
-t_val,   Yval,   idx_val_sorted   = make_split(idx_val)
-t_test,  Ytest,  idx_test_sorted  = make_split(idx_test)
+# Slice subject matrices
+X_train = X_sub_all[sub_train]          # [S_train,P]
+X_val   = X_sub_all[sub_val]            # [S_val,P]
+X_test  = X_sub_all[sub_test]           # [S_test,P]
+
+Ytrain = Y_all[:, sub_train]            # [T,S_train]
+Yval   = Y_all[:, sub_val]              # [T,S_val]
+Ytest  = Y_all[:, sub_test]             # [T,S_test]
 
 # ---------------- NORMALIZE INPUT GRID (TRAIN ONLY) ----------------
-# We normalize the independent variable (dage) using train split only
-v_mean = float(t_train.mean().item())
-v_std  = float(t_train.std().item() + 1e-8)
+# We normalize the independent variable (dage) once using the full grid,
+# but you can also use train-only stats; here we use full-grid stats to keep it simple.
+v_mean = float(t_full.mean().item())
+v_std  = float(t_full.std().item() + 1e-8)
 
 def norm_t(t):
     return (t - v_mean) / v_std
@@ -78,34 +83,46 @@ class VCNet(nn.Module):
         layers += [nn.Linear(in_dim, P)]
         self.net = nn.Sequential(*layers)
 
-    def forward(self, t_norm):  # t_norm: [batch, 1]
-        return self.net(t_norm) # [batch, P]
+    def forward(self, t_norm):        # [batch,1]
+        return self.net(t_norm)       # [batch,P]
 
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
 
-# Initial condition: f(v0) = 0 for all subjects
-y0 = torch.zeros(n_subjects, dtype=torch.float32)  # [S]
-
-# ---------------- ODE RHS ----------------
-# y is current state f(v) but RHS does not depend on y here.
-def rhs(t, y):
+# ---------------- ODE INTEGRATION HELPERS ----------------
+def make_rhs(X_sub_mat):
     """
-    t: scalar tensor
-    y: [S]
-    returns: dy/dt = rate(t) = exp( beta(t)^T X_sub )
+    Returns an RHS function rhs(t, y) for a given subject covariate matrix X_sub_mat [S_split,P].
     """
-    t_in = norm_t(t).view(1, 1)              # [1,1]
-    beta = model(t_in)                       # [1,P]
-    # rate per subject: [1,P] @ [P,S] -> [1,S] -> [S]
-    rate = torch.exp(beta @ X_sub.T).squeeze(0)
-    return rate
+    # Precompute transpose once
+    X_T = X_sub_mat.T  # [P,S_split]
 
-# Helper to integrate on a given grid
-def integrate_on_grid(t_grid, step_size=0.25, method="rk4"):
-    # odeint returns [T, S]
-    return odeint(rhs, y0, t_grid, method=method, options={"step_size": step_size})
+    def rhs(t, y):
+        # t scalar -> [1,1]
+        t_in = norm_t(t).view(1, 1)
+        beta = model(t_in)                  # [1,P]
+        rate = torch.exp(beta @ X_T).squeeze(0)  # [S_split]
+        return rate
+
+    return rhs
+
+def integrate_on_grid(t_grid, X_sub_mat, step_size=0.25, method="rk4"):
+    S_split = X_sub_mat.shape[0]
+    y0 = torch.zeros(S_split, dtype=torch.float32)
+
+    rhs = make_rhs(X_sub_mat)
+
+    g = odeint(rhs, y0, t_grid, method=method, options={"step_size": step_size})
+    # g shape: [T, S_split]
+
+    # find index of 0
+    i0 = torch.argmin(torch.abs(t_grid - 0.0))
+
+    # shift so that f(0)=1
+    f = g - g[i0] + 1.0
+
+    return f
 
 # ---------------- TRAIN LOOP ----------------
 EPOCHS = 2000
@@ -115,7 +132,7 @@ for epoch in range(EPOCHS):
     model.train()
     opt.zero_grad()
 
-    pred_train = integrate_on_grid(t_train, step_size=step_size, method="rk4")  # [T_train, S]
+    pred_train = integrate_on_grid(t_full, X_train, step_size=step_size, method="rk4")  # [T,S_train]
     loss = loss_fn(pred_train, Ytrain)
     loss.backward()
     opt.step()
@@ -123,30 +140,29 @@ for epoch in range(EPOCHS):
     if epoch % 200 == 0:
         model.eval()
         with torch.no_grad():
-            pred_val = integrate_on_grid(t_val, step_size=step_size, method="rk4")
+            pred_val = integrate_on_grid(t_full, X_val, step_size=step_size, method="rk4")
             val_loss = loss_fn(pred_val, Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val_loss:.6f}")
 
 # ---------------- TEST EVAL ----------------
 model.eval()
 with torch.no_grad():
-    pred_test = integrate_on_grid(t_test, step_size=step_size, method="rk4")
+    pred_test = integrate_on_grid(t_full, X_test, step_size=step_size, method="rk4")
     test_mse = loss_fn(pred_test, Ytest).item()
 print(f"Test MSE: {test_mse:.6f}")
 
-# ---------------- MC DROPOUT ----------------
-# Keep dropout ON at test time by setting Dropout modules to train mode only
+# ---------------- MC DROPOUT (FOR TEST SUBJECTS) ----------------
 def enable_dropout(m):
     if isinstance(m, nn.Dropout):
         m.train()
 
-def mc_dropout_predict(t_grid, n_samples=200):
+def mc_dropout_predict(t_grid, X_sub_mat, n_samples=200):
     """
     Returns:
-      mean_pred: [T,S]
-      lower_95 : [T,S]
-      upper_95 : [T,S]
-      samples  : [n_samples,T,S]
+      mean_pred: [T,S_split]
+      lower_95 : [T,S_split]
+      upper_95 : [T,S_split]
+      samples  : [K,T,S_split]
     """
     model.eval()
     model.apply(enable_dropout)
@@ -154,56 +170,52 @@ def mc_dropout_predict(t_grid, n_samples=200):
     samples = []
     with torch.no_grad():
         for _ in range(n_samples):
-            samples.append(integrate_on_grid(t_grid, step_size=step_size, method="rk4"))
-    samples = torch.stack(samples, dim=0)  # [K,T,S]
+            samples.append(integrate_on_grid(t_grid, X_sub_mat, step_size=step_size, method="rk4"))
+    samples = torch.stack(samples, dim=0)  # [K,T,S_split]
 
-    mean_pred = samples.mean(dim=0)  # [T,S]
+    mean_pred = samples.mean(dim=0)
     lower_95 = torch.quantile(samples, 0.025, dim=0)
     upper_95 = torch.quantile(samples, 0.975, dim=0)
     return mean_pred, lower_95, upper_95, samples
 
-mean_test, lower_test, upper_test, samples_test = mc_dropout_predict(t_test, n_samples=200)
-print("MC samples shape:", samples_test.shape)  # [K, T_test, S]
+mean_test, lower_test, upper_test, samples_test = mc_dropout_predict(t_full, X_test, n_samples=200)
+print("MC samples shape:", samples_test.shape)  # [K,T,S_test]
 
-# Example: print CI for a single subject at each timepoint (subject 0)
+
+# Print CI for a single test subject (index within test split)
 s = 0
-for i in range(len(t_test)):
-    print(f"t={t_test[i].item():.3f}: 95% CI (subject {s}) = ({lower_test[i,s].item():.4f}, {upper_test[i,s].item():.4f})")
+for i in [i0, min(i0+10, T-1), T-1]:
+    print(f"t={t_full[i].item():.3f}: 95% CI (test-subject {s}) = "
+          f"({lower_test[i,s].item():.4f}, {upper_test[i,s].item():.4f})")
 
-# ---------------- PLOT: trajectories for a few subjects ----------------
-# Plot on the FULL grid for interpretability
-t_full = torch.tensor(dage_np, dtype=torch.float32)
-
-model.eval()
-with torch.no_grad():
-    pred_full = integrate_on_grid(t_full, step_size=step_size, method="rk4")  # [n_grid,S]
-
-pred_full_np = pred_full.cpu().numpy()
+# ---------------- PLOT: integrated trajectories for first N test subjects ----------------
+pred_test_np = pred_test.cpu().numpy()
 
 plt.figure(figsize=(9,6))
-for s in range(min(100, n_subjects)):  # plot first 10 subjects to avoid clutter
-    plt.plot(dage_np, pred_full_np[:, s], alpha=0.8, lw=1)
+Nplot = min(50, pred_test_np.shape[1])
+for s in range(Nplot):
+    plt.plot(dage_np, pred_test_np[:, s], alpha=0.7, lw=1)
 plt.xlabel("Disease Age (grid)")
-plt.ylabel("Integrated rate f(v)")
-plt.title("Predicted integrated trajectories (first 100 subjects)")
+plt.ylabel("Integrated progression f(v)")
+plt.title(f"Predicted integrated trajectories (first {Nplot} TEST subjects)")
 plt.grid(True, alpha=0.3)
 plt.show()
 
-# ---------------- PLOT: rate function r(v) for a few subjects ----------------
-# Rate at each grid point is exp(beta(v)^T x_s)
+# ---------------- PLOT: rate curves for first N test subjects ----------------
 model.eval()
 with torch.no_grad():
-    t_in = norm_t(t_full).view(-1,1)     # [n_grid,1]
-    beta_full = model(t_in)              # [n_grid,P]
-    rate_full = torch.exp(beta_full @ X_sub.T)  # [n_grid,S]
+    t_in = norm_t(t_full).view(-1, 1)          # [T,1]
+    beta_full = model(t_in)                    # [T,P]
+    rate_test = torch.exp(beta_full @ X_test.T)  # [T,S_test]
 
-rate_full_np = rate_full.cpu().numpy()
+rate_test_np = rate_test.cpu().numpy()
 
 plt.figure(figsize=(9,6))
-for s in range(min(30, n_subjects)):
-    plt.plot(dage_np, rate_full_np[:, s], alpha=0.8, lw=1)
+Nplot = min(30, rate_test_np.shape[1])
+for s in range(Nplot):
+    plt.plot(dage_np, rate_test_np[:, s], alpha=0.7, lw=1)
 plt.xlabel("Disease Age (grid)")
 plt.ylabel("Rate r(v) = exp(beta(v)^T x)")
-plt.title("Predicted rate curves (first 30 subjects)")
+plt.title(f"Predicted rate curves (first {Nplot} TEST subjects)")
 plt.grid(True, alpha=0.3)
 plt.show()
