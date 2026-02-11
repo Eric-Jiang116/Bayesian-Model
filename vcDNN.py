@@ -1,11 +1,4 @@
 """
-FIXED VERSION: split by SUBJECTS (columns), not by time/grid points.
-
-Why:
-- timepoints along `dage` are not i.i.d. samples; they are a structured grid for an ODE.
-- splitting timepoints makes `t_test` miss important reference points (like 0) and creates large gaps.
-- correct split is: train/val/test on subjects, while always using the full time grid.
-
 Data assumptions:
 - dage.csv -> (T,) with T=250, includes (or is near) 0
 - f_pred.csv -> (T, S) with S=1000 subjects
