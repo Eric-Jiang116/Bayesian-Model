@@ -63,16 +63,20 @@ def integration(model, X, v, dage):
         vc = model(v_norm.view(1, 1))                   
         rate = torch.exp(vc @ X.T).squeeze(0) 
         return rate
+    # at dage = 0, f_pred = 1
+    # use quarter years step size
+    
     # Forward integration
-    sol_forward = odeint(ode_fn, f0, v[mid:], method='rk4')
+    sol_forward = odeint(ode_fn, f0, v[mid:], method='euler')
     # Backward integration
-    sol_backward = odeint(ode_fn, f0, v[:mid+1].flip(0), method='rk4').flip(0)
+    sol_backward = odeint(ode_fn, f0, v[:mid+1].flip(0), method='euler').flip(0)
     # Combine backward and forward results
     f_v = torch.cat([sol_backward[:-1], sol_forward], dim=0)
     # Add batch dimentions for interpolation
+
     f_v = f_v.T.unsqueeze(0) # [1, n_subjects, len(v)]
-    # Linear interpolate to disease age
-    f_pred = nn.functional.interpolate(f_v, size=len(dage), mode='linear', align_corners=True)
+    # Linear interpolate to disease age (make last dimension to size)
+    f_pred = nn.functional.interpolate(f_v, size=len(dage), mode='linear', align_corners=True) #[1, n_subjects, len(dage)]
     return f_pred.squeeze(0).T #[len(dage), n_subjects]
 
 # ------- CONVERT INPUT & OUTPUTS INTO TENSOR --------
@@ -145,7 +149,11 @@ with torch.no_grad():
         plt.plot(dage.numpy(), fpred_test[:, i].numpy())
 
     plt.xlabel("Disease Age")
-    plt.ylabel("ODE Solution / Accumulated Rate")
-    plt.title("ODE Trajectories per Subject")
+    plt.ylabel("F_pred/Accumulated Rate")
+    plt.title("Integrated Rate vs Value Curve per Subject")
     plt.legend()
     plt.show()
+
+    # Plot Varying Coefficient Function
+    for i in range(Xtest.shape[0]):
+        plt.plot()
