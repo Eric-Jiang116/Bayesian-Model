@@ -153,7 +153,3 @@ with torch.no_grad():
     plt.title("Integrated Rate vs Value Curve per Subject")
     plt.legend()
     plt.show()
-
-    # Plot Varying Coefficient Function
-    for i in range(Xtest.shape[0]):
-        plt.plot()
