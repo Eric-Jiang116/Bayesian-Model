@@ -16,6 +16,7 @@ f_df     = pd.read_csv("data/f_pred.csv")   # [250, 1000]
 dage_df  = pd.read_csv("data/dage.csv")     # [250, 1]
 v_df = pd.read_csv("data/v_pred.csv")       # [50, 1]
 beta_pred_df = pd.read_csv("data/beta_pred.csv")   # [50, 4]
+r_pred = pd.read_csv("data/r_pred.csv") 
 # ---------------- 2. BASIC SHAPES & TENSORS ----------------
 P = X_sub_df.shape[1]
 n_subjects = X_sub_df.shape[0]
@@ -23,6 +24,7 @@ n_subjects = X_sub_df.shape[0]
 v_np = v_df.to_numpy().reshape(-1).astype(np.float32)
 v_grid = torch.tensor(v_np, dtype=torch.float32)
 beta_pred_np = beta_pred_df.to_numpy().astype(np.float32) 
+r_pred_np = r_pred.to_numpy().astype(np.float32) 
 
 dage_np = dage_df.to_numpy().reshape(-1).astype(np.float32)
 t_grid = torch.tensor(dage_np, dtype=torch.float32)  # [T]
@@ -175,9 +177,11 @@ plt.show()
 model.eval()
 with torch.no_grad():
     v_norm = norm_v(v_grid).view(-1, 1)     # [K,1] in the SAME normalization as training
-    beta_hat_np = model(v_norm).cpu().numpy()    # [K,P]
+    beta_hat = model(v_norm)    # [K,P]
+    rates = rates = torch.exp(X_test.T)
 
-# Plot beta_hat(v) vs beta_pred(v) on the v axis
+beta_hat_np = beta_hat.cpu().numpy()
+# ------- BETA_HAT (v) vs BETA_PRED ---------
 fig, axes = plt.subplots(P, 1, sharex=True)
 for j in range(P):
     axes[j].plot(v_np, beta_pred_np[:, j], "k--", lw=2, label="beta_pred")
@@ -189,7 +193,23 @@ axes[-1].set_xlabel("v (v_pred grid)")
 fig.suptitle("Varying coefficients: beta_hat(v) vs beta_pred(v)\n(using affine v↔dage mapping)", y=0.995)
 plt.tight_layout()
 plt.show()
+# ------ RATE VS VALUE CURVE --------
+r_true = r_pred_np[:, idx_test]
+rates_np = rates.cpu().numpy()
+plt.figure(figsize=(10, 5))
+for s in range(min(50, X_test.shape[0])):
+    plt.plot(v_np, r_true[:, s], 'k--', alpha=0.2, label="True" if s == 0 else "")
+    plt.plot(v_np, rates_np[:, s], alpha=0.4, label="Predicted" if s == 0 else "")
 
+plt.axvline(1.0, color='red', linestyle=':', label="f(0)=1 anchor")
+plt.xlabel("f value (v)")
+plt.ylabel("rate r(v) = exp(Σ xᵢβ(v))")
+plt.title("Rate vs Value Curve — test subjects")
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
+
+# save model
 torch.save({
     "model_state_dict": model.state_dict(),
     "optimizer_state_dict": optimizer.state_dict(),
@@ -198,10 +218,12 @@ torch.save({
     "high_test": high_test,
     "v_mean": v_mean,
     "v_std": v_std,
+    "idx_test": idx_test,
     "X_test": X_test,
     "Y_test": Y_test
 }, "model_checkpoint.pt")
 
+# ------ COMBINED EFFECTS CORRELATION ------
 model.eval()
 with torch.no_grad():
     v_norm = norm_v(v_grid).view(-1, 1)
