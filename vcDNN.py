@@ -71,8 +71,8 @@ class VCNet(nn.Module):
         for h in hidden:
             layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)]
             in_dim = h
-        last_layer = nn.Linear(in_dim, P)
-        nn.init.zeros_(last_layer.weight) # start with zero output
+        last_layer = nn.Linear(in_dim, P, bias=True)
+        nn.init.zeros_(last_layer.weight) # start with zero output (prevent exploding numbers)
         nn.init.zeros_(last_layer.bias)
         layers += [last_layer]
         self.net = nn.Sequential(*layers)
@@ -90,17 +90,35 @@ def get_ode_rhs(current_X):
         y_norm = norm_v(y).view(-1, 1)    # [S_split,1]
         beta = model(y_norm)             # [S_split,P]
         exponent = (beta * current_X).sum(dim=1)     # [S]
-        rate = torch.exp(exponent.clamp(-5, 5))      # also clamp
+        rate = torch.exp(exponent.clamp(-5, 5))      # also clamp to prevent exploding numbers
         return rate
     return rhs
 
-def predict_trajectories(t_grid, current_X, method="euler", step_size=0.25):
+def predict_trajectories(t_grid, current_X, method="rk4", step_size=0.5):
     rhs = get_ode_rhs(current_X)
     y0 = torch.ones(current_X.shape[0], dtype=torch.float32)  # initial value at 1
     forward = odeint(rhs, y0, t_grid[i0:], method=method, options={"step_size": step_size})  # [T, S_split]
     backward = odeint(rhs, y0, t_grid[:i0+1].flip(0), method=method, options={"step_size": step_size}).flip(0) # [T, S_split]
     F = torch.cat([backward[:-1], forward], dim=0)
     return F
+
+def anchor_rate_loss(lambda_anchor=1.0):
+    v_anchor = norm_v(torch.tensor([[1.0]])).view(1, 1)
+    beta_anchor = model(v_anchor)
+    rate_anchor = torch.exp((beta_anchor * X_train).sum(dim=1))
+    empirical_rate = (Y_train[i0+1] - Y_train[i0]) / (t_grid[i0+1] - t_grid[i0])
+    return lambda_anchor * loss_fn(rate_anchor, empirical_rate.abs())
+
+def regularization_loss(lambda_smooth=0.1, lambda_scale=0.01):
+    v_norm = norm_v(v_grid).view(-1, 1)
+    beta_hat = model(v_norm)              # [K, P]
+    # smoothness — penalize wiggly betas
+    diff = beta_hat[1:] - beta_hat[:-1]
+    smooth_loss = torch.mean(diff ** 2)
+    # scale — penalize large beta values
+    scale_loss = torch.mean(beta_hat ** 2)
+    
+    return lambda_smooth * smooth_loss + lambda_scale * scale_loss
 
 # ---------------- 6. TRAINING ----------------
 EPOCHS = 1000
@@ -109,10 +127,7 @@ for epoch in range(EPOCHS + 1):
     optimizer.zero_grad()
 
     preds = predict_trajectories(t_grid, X_train)  # [T, S_train]
-
-    # print("pred range at init:", preds.min().item(), preds.max().item())
-    # print("target range:", Y_train[:, :5].min().item(), Y_train[:, :5].max().item())
-    loss = loss_fn(preds, Y_train)
+    loss = loss_fn(preds, Y_train) + anchor_rate_loss() + regularization_loss()
     loss.backward()
     optimizer.step()
 
@@ -145,6 +160,22 @@ def mc_dropout_predict(t_grid, current_X, n_samples=50):
     return mean, lo, hi
 
 mean_test, low_test, high_test = mc_dropout_predict(t_grid, X_test)
+
+# ------ SAVE MODEL --------
+# save model
+torch.save({
+    "model_state_dict": model.state_dict(),
+    "optimizer_state_dict": optimizer.state_dict(),
+    "mean_test": mean_test,
+    "low_test":low_test,
+    "high_test": high_test,
+    "v_mean": v_mean,
+    "v_std": v_std,
+    "idx_test": idx_test,
+    "X_test": X_test,
+    "Y_test": Y_test
+}, "model_checkpoint.pt")
+
 # ---------------- 8. VISUALIZATION ----------------
 plt.figure(figsize=(10, 5))
 for s in range(50):
@@ -160,27 +191,14 @@ plt.ylabel("f(v)")
 plt.legend()
 plt.show()
 
-# # Ranges
-# d_min, d_max = float(dage_np.min()), float(dage_np.max())
-# v_min, v_max = float(v_pred_np.min()), float(v_pred_np.max())
-# print("dage range:", d_min, d_max)
-# print("v_pred range:", v_min, v_max)
-
-# # Inverse map: v -> dage
-# def v_to_dage(v):
-#     return d_min + (v - v_min) * (d_max - d_min) / (v_max - v_min)
-
-# dage_at_v = v_to_dage(v_pred_np).astype(np.float32)    # [K]
-# dage_at_v_t = torch.tensor(dage_at_v, dtype=torch.float32)
-
-# Evaluate beta_hat at these mapped dage locations
 model.eval()
 with torch.no_grad():
     v_norm = norm_v(v_grid).view(-1, 1)     # [K,1] in the SAME normalization as training
     beta_hat = model(v_norm)    # [K,P]
-    rates = rates = torch.exp(X_test.T)
+    rates = rates = torch.exp(beta_hat @ X_test.T)
 
 beta_hat_np = beta_hat.cpu().numpy()
+
 # ------- BETA_HAT (v) vs BETA_PRED ---------
 fig, axes = plt.subplots(P, 1, sharex=True)
 for j in range(P):
@@ -190,38 +208,27 @@ for j in range(P):
     axes[j].grid(True, alpha=0.3)
     axes[j].legend()
 axes[-1].set_xlabel("v (v_pred grid)")
-fig.suptitle("Varying coefficients: beta_hat(v) vs beta_pred(v)\n(using affine v↔dage mapping)", y=0.995)
+fig.suptitle("Varying coefficients: beta_hat(v) vs beta_pred(v)", y=0.995)
 plt.tight_layout()
 plt.show()
+
 # ------ RATE VS VALUE CURVE --------
 r_true = r_pred_np[:, idx_test]
 rates_np = rates.cpu().numpy()
+
 plt.figure(figsize=(10, 5))
 for s in range(min(50, X_test.shape[0])):
     plt.plot(v_np, r_true[:, s], 'k--', alpha=0.2, label="True" if s == 0 else "")
     plt.plot(v_np, rates_np[:, s], alpha=0.4, label="Predicted" if s == 0 else "")
 
 plt.axvline(1.0, color='red', linestyle=':', label="f(0)=1 anchor")
-plt.xlabel("f value (v)")
-plt.ylabel("rate r(v) = exp(Σ xᵢβ(v))")
+plt.xlabel("fpred(v)")
+plt.ylabel("Rate")
 plt.title("Rate vs Value Curve — test subjects")
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.show()
 
-# save model
-torch.save({
-    "model_state_dict": model.state_dict(),
-    "optimizer_state_dict": optimizer.state_dict(),
-    "mean_test": mean_test,
-    "low_test":low_test,
-    "high_test": high_test,
-    "v_mean": v_mean,
-    "v_std": v_std,
-    "idx_test": idx_test,
-    "X_test": X_test,
-    "Y_test": Y_test
-}, "model_checkpoint.pt")
 
 # ------ COMBINED EFFECTS CORRELATION ------
 model.eval()

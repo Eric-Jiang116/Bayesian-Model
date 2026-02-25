@@ -44,7 +44,7 @@ class VCNet(nn.Module):
 
 # ---------------- LOAD CHECKPOINT ----------------
 model = VCNet(P)
-checkpoint = torch.load("model_checkpoint.pt")
+checkpoint = torch.load("model_checkpoint.pt", weights_only=False)
 model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
 
@@ -54,8 +54,9 @@ mean_test = checkpoint["mean_test"]
 low_test  = checkpoint["low_test"]
 high_test  = checkpoint["high_test"]
 idx_test = checkpoint["idx_test"]
-X_test = X_all[:, idx_test]
-Y_test = 
+X_test = checkpoint["X_test"]
+Y_test = checkpoint["Y_test"]
+
 def norm_v(v):
     return (v - v_mean) / v_std
 
