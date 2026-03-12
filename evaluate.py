@@ -23,7 +23,7 @@ X_all      = torch.tensor(X_sub_df.to_numpy().astype(np.float32))
 v_grid     = torch.tensor(v_np, dtype=torch.float32)
 t_grid     = torch.tensor(dage_np, dtype=torch.float32)
 i0         = int(torch.argmin(torch.abs(t_grid - 0.0)).item())
-
+beta = torch.tensor(beta_pred_np, dtype=torch.float32)
 # ---------------- MODEL DEFINITION (must match training) ----------------
 class VCNet(nn.Module):
     def __init__(self, P, hidden=(64, 64), dropout=0.2):
@@ -42,6 +42,9 @@ class VCNet(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+rate = torch.exp(beta @ X_all.T)
+print(rate)
+print(r_pred_np)
 # ---------------- LOAD CHECKPOINT ----------------
 model = VCNet(P)
 checkpoint = torch.load("model_checkpoint.pt", weights_only=False)
@@ -84,37 +87,37 @@ beta_hat_np = beta_hat.cpu().numpy()
 rates_np = rates.cpu().numpy()
 r_true = r_pred_np[:, idx_test]
 
-fig, axes = plt.subplots(P, 1, sharex=True)
-for j in range(P):
-    axes[j].plot(v_np, beta_pred_np[:, j], "k--", lw=2, label="beta_pred")
-    axes[j].plot(v_np, beta_hat_np[:, j], lw=2, label="beta_hat (mapped)")
-    axes[j].set_ylabel(f"beta[{j}]")
-    axes[j].grid(True, alpha=0.3)
-    axes[j].legend()
-axes[-1].set_xlabel("v (v_pred grid)")
-fig.suptitle("Varying coefficients: beta_hat(v) vs beta_pred(v)\n(using affine v↔dage mapping)", y=0.995)
-plt.tight_layout()
-plt.show()
+# fig, axes = plt.subplots(P, 1, sharex=True)
+# for j in range(P):
+#     axes[j].plot(v_np, beta_pred_np[:, j], "k--", lw=2, label="beta_pred")
+#     axes[j].plot(v_np, beta_hat_np[:, j], lw=2, label="beta_hat (mapped)")
+#     axes[j].set_ylabel(f"beta[{j}]")
+#     axes[j].grid(True, alpha=0.3)
+#     axes[j].legend()
+# axes[-1].set_xlabel("v (v_pred grid)")
+# fig.suptitle("Varying coefficients: beta_hat(v) vs beta_pred(v)\n(using affine v↔dage mapping)", y=0.995)
+# plt.tight_layout()
+# plt.show()
 
-plt.figure(figsize=(10, 5))
-for s in range(min(50, X_test.shape[0])):
-    plt.plot(v_np, r_true[:, s], 'k--', alpha=0.2, label="True" if s == 0 else "")
-    plt.plot(v_np, rates_np[:, s], alpha=0.4, label="Predicted" if s == 0 else "")
+# plt.figure(figsize=(10, 5))
+# for s in range(min(50, X_test.shape[0])):
+#     plt.plot(v_np, r_true[:, s], 'k--', alpha=0.2, label="True" if s == 0 else "")
+#     plt.plot(v_np, rates_np[:, s], alpha=0.4, label="Predicted" if s == 0 else "")
 
-plt.axvline(1.0, color='red', linestyle=':', label="f(0)=1 anchor")
-plt.xlabel("f value (v)")
-plt.ylabel("rate r(v) = exp(Σ xᵢβ(v))")
-plt.title("Rate vs Value Curve — test subjects")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.show()
+# plt.axvline(1.0, color='red', linestyle=':', label="f(0)=1 anchor")
+# plt.xlabel("f value (v)")
+# plt.ylabel("rate r(v) = exp(Σ xᵢβ(v))")
+# plt.title("Rate vs Value Curve — test subjects")
+# plt.legend()
+# plt.grid(True, alpha=0.3)
+# plt.show()
 
-# Compare the linear combination for each subject
-# True combined effect
-# beta_hat = model(v_norm)
-# true_combined = beta_pred_np @ X_test.numpy().T   # [K, S_test]
-# hat_combined  = beta_hat.numpy() @ X_test.numpy().T  # [K, S_test]
+# # Compare the linear combination for each subject
+# # True combined effect
+# # beta_hat = model(v_norm)
+# # true_combined = beta_pred_np @ X_test.numpy().T   # [K, S_test]
+# # hat_combined  = beta_hat.numpy() @ X_test.numpy().T  # [K, S_test]
 
-# for s in range(5):
-#     corr = np.corrcoef(true_combined[:, s], hat_combined[:, s])[0, 1]
-#     print(f"Subject {s} combined effect correlation: {corr:.4f}")
+# # for s in range(5):
+# #     corr = np.corrcoef(true_combined[:, s], hat_combined[:, s])[0, 1]
+# #     print(f"Subject {s} combined effect correlation: {corr:.4f}")

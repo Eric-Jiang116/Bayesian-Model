@@ -16,7 +16,7 @@ f_df     = pd.read_csv("data/f_pred.csv")   # [250, 1000]
 dage_df  = pd.read_csv("data/dage.csv")     # [250, 1]
 v_df = pd.read_csv("data/v_pred.csv")       # [50, 1]
 beta_pred_df = pd.read_csv("data/beta_pred.csv")   # [50, 4]
-r_pred = pd.read_csv("data/r_pred.csv") 
+r_pred = pd.read_csv("data/r_pred.csv")     # [50, 1000]
 # ---------------- 2. BASIC SHAPES & TENSORS ----------------
 P = X_sub_df.shape[1]
 n_subjects = X_sub_df.shape[0]
@@ -24,6 +24,7 @@ n_subjects = X_sub_df.shape[0]
 v_np = v_df.to_numpy().reshape(-1).astype(np.float32)
 v_grid = torch.tensor(v_np, dtype=torch.float32)
 beta_pred_np = beta_pred_df.to_numpy().astype(np.float32) 
+beta_pred = torch.tensor(beta_pred_np, dtype=torch.float32)
 r_pred_np = r_pred.to_numpy().astype(np.float32) 
 
 dage_np = dage_df.to_numpy().reshape(-1).astype(np.float32)
@@ -99,9 +100,11 @@ def predict_trajectories(t_grid, current_X, method="rk4", step_size=0.5):
     y0 = torch.ones(current_X.shape[0], dtype=torch.float32)  # initial value at 1
     forward = odeint(rhs, y0, t_grid[i0:], method=method, options={"step_size": step_size})  # [T, S_split]
     backward = odeint(rhs, y0, t_grid[:i0+1].flip(0), method=method, options={"step_size": step_size}).flip(0) # [T, S_split]
+    
     F = torch.cat([backward[:-1], forward], dim=0)
     return F
 
+# temporary: penalize large differences between predicted rate and observed/empirical rate 
 def anchor_rate_loss(lambda_anchor=1.0):
     v_anchor = norm_v(torch.tensor([[1.0]])).view(1, 1)
     beta_anchor = model(v_anchor)
@@ -109,6 +112,7 @@ def anchor_rate_loss(lambda_anchor=1.0):
     empirical_rate = (Y_train[i0+1] - Y_train[i0]) / (t_grid[i0+1] - t_grid[i0])
     return lambda_anchor * loss_fn(rate_anchor, empirical_rate.abs())
 
+# temporary: penalize non-smooth and very large varying coefficient functions
 def regularization_loss(lambda_smooth=0.1, lambda_scale=0.01):
     v_norm = norm_v(v_grid).view(-1, 1)
     beta_hat = model(v_norm)              # [K, P]
@@ -121,13 +125,13 @@ def regularization_loss(lambda_smooth=0.1, lambda_scale=0.01):
     return lambda_smooth * smooth_loss + lambda_scale * scale_loss
 
 # ---------------- 6. TRAINING ----------------
-EPOCHS = 1000
+EPOCHS = 2000
 for epoch in range(EPOCHS + 1):
     model.train()
     optimizer.zero_grad()
 
     preds = predict_trajectories(t_grid, X_train)  # [T, S_train]
-    loss = loss_fn(preds, Y_train) + anchor_rate_loss() + regularization_loss()
+    loss = loss_fn(preds, Y_train)
     loss.backward()
     optimizer.step()
 
@@ -195,7 +199,8 @@ model.eval()
 with torch.no_grad():
     v_norm = norm_v(v_grid).view(-1, 1)     # [K,1] in the SAME normalization as training
     beta_hat = model(v_norm)    # [K,P]
-    rates = rates = torch.exp(beta_hat @ X_test.T)
+    rates = torch.exp(beta_hat @ X_test.T)
+    F = predict_trajectories(t_grid, X_train[:5])
 
 beta_hat_np = beta_hat.cpu().numpy()
 
@@ -244,3 +249,45 @@ hat_combined  = beta_hat.numpy() @ X_test.numpy().T  # [K, S_test]
 for s in range(5):
     corr = np.corrcoef(true_combined[:, s], hat_combined[:, s])[0, 1]
     print(f"Subject {s} combined effect correlation: {corr:.4f}")
+
+
+# TEST_SUBJECTS = [0, 1, 2, 3, 4]
+# X_test_small = X_all[TEST_SUBJECTS]          # [5, P]
+# Y_test_small = torch.tensor(f_np[:, TEST_SUBJECTS], dtype=torch.float32)  # [T, 5]
+
+# rate_curves = torch.exp(beta_pred @ X_test_small.T)  # [K, S] — compute once
+
+# def rhs(t, y):
+#     rates = []
+#     for s in range(len(TEST_SUBJECTS)):
+#         # interpolate rate curve
+#         v_clamped = y[s].clamp(v_grid[0], v_grid[-1])
+#         idx  = torch.searchsorted(v_grid, v_clamped).clamp(1, K - 1)
+#         v_lo, v_hi = v_grid[idx - 1], v_grid[idx]
+#         r_lo, r_hi = rate_curves[idx - 1, s], rate_curves[idx, s]
+#         w = (v_clamped - v_lo) / (v_hi - v_lo + 1e-12)
+#         rates.append(r_lo + w * (r_hi - r_lo))
+#     return torch.stack(rates)
+
+# y0 = torch.ones(len(TEST_SUBJECTS), dtype=torch.float32)
+# forward  = odeint(rhs, y0, t_grid[i0:],           method="rk4", options={"step_size": 0.5})
+# backward = odeint(rhs, y0, t_grid[:i0+1].flip(0), method="rk4", options={"step_size": 0.5}).flip(0)
+# preds    = torch.cat([backward[:-1], forward], dim=0)  # [T, S]
+
+# fig, axes = plt.subplots(len(TEST_SUBJECTS), 1,
+#                          figsize=(8, 1.5 * len(TEST_SUBJECTS)), sharex=True)
+
+# for s, ax in enumerate(axes):
+#     ax.plot(dage_np, Y_test_small[:, s].numpy(), 'k--', lw=1.5, label="True f_pred")
+#     ax.plot(dage_np, preds[:, s].numpy(),  lw=1.5, label="ODE (true β, interp)")
+#     ax.axvline(0.0, color='gray', linestyle=':', alpha=0.6)
+#     ax.axhline(1.0, color='red',  linestyle=':', alpha=0.5, label="anchor f(0)=1")
+#     ax.set_title(f"Subject {TEST_SUBJECTS[s]}")
+#     ax.set_ylabel("f(v)")
+#     ax.legend(fontsize=8)
+#     ax.grid(True, alpha=0.3)
+
+# axes[-1].set_xlabel("Disease Age")
+# fig.suptitle("ODE Integration (True β) vs Observed f_pred", fontsize=13)
+# plt.tight_layout()
+# plt.show()
