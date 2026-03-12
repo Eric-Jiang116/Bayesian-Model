@@ -10,14 +10,15 @@ SEED = 42
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 
-# ---------------- 1. LOAD DATA ----------------
+# ---------------- LOAD DATA ----------------
 X_sub_df = pd.read_csv("data/Xsub.csv")     # [1000, 4]
 f_df     = pd.read_csv("data/f_pred.csv")   # [250, 1000]
 dage_df  = pd.read_csv("data/dage.csv")     # [250, 1]
 v_df = pd.read_csv("data/v_pred.csv")       # [50, 1]
 beta_pred_df = pd.read_csv("data/beta_pred.csv")   # [50, 4]
 r_pred = pd.read_csv("data/r_pred.csv")     # [50, 1000]
-# ---------------- 2. BASIC SHAPES & TENSORS ----------------
+
+# ---------------- BASIC SHAPES & TENSORS ----------------
 P = X_sub_df.shape[1]
 n_subjects = X_sub_df.shape[0]
 
@@ -38,11 +39,7 @@ assert f_np.shape == (T, n_subjects), f"Expected {(T,n_subjects)}, got {f_np.sha
 K = len(v_np)
 assert beta_pred_np.shape == (K, P), f"Expected beta_pred {(K,P)} got {beta_pred_np.shape}"
 
-# index closest to onset (0)
-i0 = int(torch.argmin(torch.abs(t_grid - 0.0)).item())
-print("Nearest gridpoint to 0:", float(t_grid[i0].item()), "at index", i0)
-
-# ---------------- 3. SUBJECT-BASED SPLIT ----------------
+# ---------------- SUBJECT-BASED SPLIT ----------------
 sub_indices = np.arange(n_subjects)
 idx_train, idx_test = train_test_split(sub_indices, test_size=0.2, random_state=SEED, shuffle=True)
 idx_train, idx_val  = train_test_split(idx_train, test_size=0.25, random_state=SEED, shuffle=True)
@@ -56,14 +53,14 @@ X_train, Y_train = get_split_tensors(idx_train)
 X_val,   Y_val   = get_split_tensors(idx_val)
 X_test,  Y_test  = get_split_tensors(idx_test)
 
-# ---------------- 4. NORMALIZATION ----------------
+# ---------------- NORMALIZATION (stabilize training) ----------------
 v_mean = float(v_np.mean().item())
 v_std  = float(v_np.std().item() + 1e-8)
 
 def norm_v(v):
     return (v - v_mean) / v_std
 
-# ---------------- 5. MODEL & ODE ----------------
+# ---------------- MODEL & ODE DEFINITION ----------------
 class VCNet(nn.Module):
     def __init__(self, P, hidden=(64, 64), dropout=0.2):
         super().__init__()
@@ -85,6 +82,10 @@ model = VCNet(P)
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
 
+# index closest to onset (0)
+i0 = int(torch.argmin(torch.abs(t_grid - 0.0)).item())
+print("Nearest gridpoint to 0:", float(t_grid[i0].item()), "at index", i0)
+
 def get_ode_rhs(current_X):
     X_T = current_X.T  # [P, S_split]
     def rhs(t, y):
@@ -104,27 +105,7 @@ def predict_trajectories(t_grid, current_X, method="rk4", step_size=0.5):
     F = torch.cat([backward[:-1], forward], dim=0)
     return F
 
-# temporary: penalize large differences between predicted rate and observed/empirical rate 
-def anchor_rate_loss(lambda_anchor=1.0):
-    v_anchor = norm_v(torch.tensor([[1.0]])).view(1, 1)
-    beta_anchor = model(v_anchor)
-    rate_anchor = torch.exp((beta_anchor * X_train).sum(dim=1))
-    empirical_rate = (Y_train[i0+1] - Y_train[i0]) / (t_grid[i0+1] - t_grid[i0])
-    return lambda_anchor * loss_fn(rate_anchor, empirical_rate.abs())
-
-# temporary: penalize non-smooth and very large varying coefficient functions
-def regularization_loss(lambda_smooth=0.1, lambda_scale=0.01):
-    v_norm = norm_v(v_grid).view(-1, 1)
-    beta_hat = model(v_norm)              # [K, P]
-    # smoothness — penalize wiggly betas
-    diff = beta_hat[1:] - beta_hat[:-1]
-    smooth_loss = torch.mean(diff ** 2)
-    # scale — penalize large beta values
-    scale_loss = torch.mean(beta_hat ** 2)
-    
-    return lambda_smooth * smooth_loss + lambda_scale * scale_loss
-
-# ---------------- 6. TRAINING ----------------
+# ---------------- TRAINING ----------------
 EPOCHS = 2000
 for epoch in range(EPOCHS + 1):
     model.train()
@@ -142,7 +123,7 @@ for epoch in range(EPOCHS + 1):
             val_loss = loss_fn(val_preds, Y_val).item()
         print(f"Epoch {epoch:4d} | Train Loss: {loss.item():.6f} | Val Loss: {val_loss:.6f}")
 
-# ---------------- 7. MC DROPOUT ----------------
+# ---------------- MC DROPOUT ----------------
 def enable_dropout(m):
     if isinstance(m, nn.Dropout):
         m.train()
@@ -165,7 +146,7 @@ def mc_dropout_predict(t_grid, current_X, n_samples=50):
 
 mean_test, low_test, high_test = mc_dropout_predict(t_grid, X_test)
 
-# ------ SAVE MODEL --------
+# ------------------- SAVE MODEL ------------------
 # save model
 torch.save({
     "model_state_dict": model.state_dict(),
@@ -180,7 +161,8 @@ torch.save({
     "Y_test": Y_test
 }, "model_checkpoint.pt")
 
-# ---------------- 8. VISUALIZATION ----------------
+# ---------------- VISUALIZATION ----------------
+# Predicted Trajectories
 plt.figure(figsize=(10, 5))
 for s in range(50):
     plt.plot(dage_np, Y_test[:, s].cpu(), 'k--', alpha=0.3, label="True" if s==0 else "")
@@ -204,7 +186,7 @@ with torch.no_grad():
 
 beta_hat_np = beta_hat.cpu().numpy()
 
-# ------- BETA_HAT (v) vs BETA_PRED ---------
+# Predicted vc vs true vc 
 fig, axes = plt.subplots(P, 1, sharex=True)
 for j in range(P):
     axes[j].plot(v_np, beta_pred_np[:, j], "k--", lw=2, label="beta_pred")
@@ -217,7 +199,7 @@ fig.suptitle("Varying coefficients: beta_hat(v) vs beta_pred(v)", y=0.995)
 plt.tight_layout()
 plt.show()
 
-# ------ RATE VS VALUE CURVE --------
+# Rate vs value curve
 r_true = r_pred_np[:, idx_test]
 rates_np = rates.cpu().numpy()
 
@@ -233,23 +215,6 @@ plt.title("Rate vs Value Curve — test subjects")
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.show()
-
-
-# ------ COMBINED EFFECTS CORRELATION ------
-model.eval()
-with torch.no_grad():
-    v_norm = norm_v(v_grid).view(-1, 1)
-    beta_hat = model(v_norm)  # [K, P]
-
-# Compare the linear combination for each subject
-# True combined effect
-true_combined = beta_pred_np @ X_test.numpy().T   # [K, S_test]
-hat_combined  = beta_hat.numpy() @ X_test.numpy().T  # [K, S_test]
-
-for s in range(5):
-    corr = np.corrcoef(true_combined[:, s], hat_combined[:, s])[0, 1]
-    print(f"Subject {s} combined effect correlation: {corr:.4f}")
-
 
 # TEST_SUBJECTS = [0, 1, 2, 3, 4]
 # X_test_small = X_all[TEST_SUBJECTS]          # [5, P]
