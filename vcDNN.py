@@ -11,12 +11,12 @@ torch.manual_seed(SEED)
 np.random.seed(SEED)
 
 # ---------------- LOAD DATA ----------------
-X_sub_df = pd.read_csv("data/Xsub.csv")     # [1000, 4]
-f_df     = pd.read_csv("data/f_pred.csv")   # [250, 1000]
-dage_df  = pd.read_csv("data/dage.csv")     # [250, 1]
-v_df = pd.read_csv("data/v_pred.csv")       # [50, 1]
-beta_pred_df = pd.read_csv("data/beta_pred.csv")   # [50, 4]
-r_pred = pd.read_csv("data/r_pred.csv")     # [50, 1000]
+X_sub_df = pd.read_csv("data/Xsub.csv")     # [1000, 4] subject covariates
+f_df     = pd.read_csv("data/f_pred.csv")   # [250, 1000] outcome, trajectory
+dage_df  = pd.read_csv("data/dage.csv")     # [250, 1] disease age
+v_df = pd.read_csv("data/v_pred.csv")       # [50, 1] domain (v_grid)
+beta_pred_df = pd.read_csv("data/beta_pred.csv")   # [50, 4] true varying coeffi
+r_pred = pd.read_csv("data/r_pred.csv")     # [50, 1000] rate vs value
 
 # ---------------- BASIC SHAPES & TENSORS ----------------
 P = X_sub_df.shape[1]
@@ -60,6 +60,8 @@ v_std  = float(v_np.std().item() + 1e-8)
 def norm_v(v):
     return (v - v_mean) / v_std
 
+# normalize covariates
+
 # ---------------- MODEL & ODE DEFINITION ----------------
 class VCNet(nn.Module):
     def __init__(self, P, hidden=(64, 64), dropout=0.2):
@@ -67,13 +69,14 @@ class VCNet(nn.Module):
         layers = []
         in_dim = 1
         for h in hidden:
-            layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)]
+            layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)] # remove linear, only last layer liner, first second nonlinear activations
             in_dim = h
-        last_layer = nn.Linear(in_dim, P, bias=True)
-        nn.init.zeros_(last_layer.weight) # start with zero output (prevent exploding numbers)
-        nn.init.zeros_(last_layer.bias)
+        last_layer = nn.Linear(in_dim, P, bias=True) # outputs coefficient vector
+        nn.init.zeros_(last_layer.weight) # start with zero output (prevent exploding numbers) or initialize local to the solution
+        nn.init.zeros_(last_layer.bias) # initially, final layer computes beta(v) = 0
         layers += [last_layer]
         self.net = nn.Sequential(*layers)
+        # consider initializing weight = -3 or something negative
 
     def forward(self, t_norm):  # [batch,1]
         return self.net(t_norm) # [batch,P]
@@ -91,8 +94,7 @@ def get_ode_rhs(current_X):
     def rhs(t, y):
         y_norm = norm_v(y).view(-1, 1)    # [S_split,1]
         beta = model(y_norm)             # [S_split,P]
-        exponent = (beta * current_X).sum(dim=1)     # [S]
-        rate = torch.exp(exponent.clamp(-5, 5))      # also clamp to prevent exploding numbers
+        rate = torch.exp((beta * current_X).sum(dim=1)) # consider add to network: last layer output rate values so more info
         return rate
     return rhs
 
@@ -102,7 +104,7 @@ def predict_trajectories(t_grid, current_X, method="rk4", step_size=0.5):
     forward = odeint(rhs, y0, t_grid[i0:], method=method, options={"step_size": step_size})  # [T, S_split]
     backward = odeint(rhs, y0, t_grid[:i0+1].flip(0), method=method, options={"step_size": step_size}).flip(0) # [T, S_split]
     
-    F = torch.cat([backward[:-1], forward], dim=0)
+    F = torch.cat([backward[:-1], forward], dim=0) #[250, S]
     return F
 
 # ---------------- TRAINING ----------------
@@ -138,7 +140,7 @@ def mc_dropout_predict(t_grid, current_X, n_samples=50):
         for _ in range(n_samples):
             all_samples.append(predict_trajectories(t_grid, current_X))
     samples = torch.stack(all_samples, dim=0)  # [K, T, S_split]
-
+     
     mean = samples.mean(dim=0)
     lo = torch.quantile(samples, 0.025, dim=0)
     hi = torch.quantile(samples, 0.975, dim=0)
