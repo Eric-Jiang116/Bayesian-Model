@@ -22,7 +22,7 @@ Xsub_train, Xsub_val, rate_train, rate_val = train_test_split(Xsub_train, rate_t
 # norm = lambda x: (x - v_mean) / (v_std)
 
 # model
-def VCNet(P, hidden=(64,64), dropout=0.2):
+def VCNet(P, hidden=(128, 256), dropout=0.2):
     layers, in_dim = [], 1 # input is 1D: time variable
     for h in hidden:
         layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)]
@@ -43,6 +43,7 @@ def rate_fn(vc, X_sub):
 # convert to tensor
 X_sub = torch.tensor(Xsub.to_numpy()).float()
 rate = torch.tensor(rate.to_numpy()).float()
+v_np = v.to_numpy().reshape(-1).astype(np.float32)
 v = torch.tensor(v.to_numpy()).float()
 
 Xtrain = torch.tensor(Xsub_train.to_numpy()).float()
@@ -63,7 +64,7 @@ for epoch in range(2000):
     model.train()
     opt.zero_grad()
 
-    vc_train_pred = model(v_norm)                 # [N_train, P]
+    vc_train_pred = model(v)                 # [N_train, P]
     rate_pred = rate_fn(vc_train_pred, Xtrain) # [N_train, n_subjects]
     loss = loss_fn(rate_pred, Ytrain)
 
@@ -72,8 +73,8 @@ for epoch in range(2000):
     if epoch % 200 == 0:
         model.eval()
         with torch.no_grad():
-            rate_val = rate_fn(model(v_norm), Xval)
-            val = loss_fn(rate_val, Yval).item()
+            rate_val_pred = rate_fn(model(v), Xval)
+            val = loss_fn(rate_val_pred, Yval).item()
         print(f"Epoch {epoch:4d} | train {loss.item():.6f} | val {val:.6f}")
 
 model.eval()
@@ -86,7 +87,7 @@ def mc_dropout_predict(model, X, n_samples=1000):
     preds = []
     for i in range(n_samples):
         with torch.no_grad():
-            vc_pred = model(v_norm)
+            vc_pred = model(v)
             rate_pred = rate_fn(vc_pred, Xtest)
             preds.append(rate_pred)  # [1, N_test, n_subjects]
     preds = torch.stack(preds, dim=0) # [n_samples, N_test, n_subjects]
@@ -108,7 +109,7 @@ for j in range(len(lower)):
     print(f"Test point {j + 1}: 95% CI = {(lower[j], upper[j])}\n")
 
 with torch.no_grad():
-    vc_test_pred  = model(v_norm)                 # [N_test, P]
+    vc_test_pred  = model(v)                 # [N_test, P]
     rate_test_pred = rate_fn(vc_test_pred, Xtest)  # [N_test, n_subjects]
     test_mse = loss_fn(rate_test_pred, Ytest).item()
 print(f"Test MSE: {test_mse}")
@@ -118,8 +119,8 @@ model.eval()
 vmin, vmax = float(v.min()), float(v.max()) # plot only test range for interpolation
 v_grid = np.linspace(vmin, vmax, 50).astype(np.float32).reshape(-1,1)
 with torch.no_grad():
-    vc_pred = model(v_norm)
-    rate_pred = rate_fn(vc_pred, Xtest).cpu().numpy()
+    vc_hat = model(v)
+    rate_pred = rate_fn(vc_hat, Xtest).cpu().numpy()
 
 # Sort order of values
 order = np.argsort(v[:,0]) # indices to sort test set, so that v and rate have the same index order for plotting
@@ -128,19 +129,6 @@ rate_sorted = rate_test.to_numpy()[order]
 mean_sorted = mean_pred.cpu().numpy()[order]
 lower_sorted = lower.cpu().numpy()[order]
 upper_sorted = upper.cpu().numpy()[order]
-
-# # Plot predictions vs truth
-# plt.figure(figsize=(8,5))
-# for j in range(6):  # for each subject
-#     if j == 0:
-#         plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6, label="True (test)")
-#         plt.plot(v_grid[:, 0], rate_pred[:, j], label="Predicted")
-#     else:
-#         plt.scatter(v_sorted, rate_sorted[:, j], s=25, alpha=0.6)
-#         plt.plot(v_grid[:, 0], rate_pred[:, j])
-# plt.xlabel("v"); plt.ylabel("rate values")
-# plt.legend()
-# plt.show()
 
 plt.figure(figsize=(9, 6))
 
@@ -156,6 +144,23 @@ plt.xlabel("v")
 plt.ylabel("Predicted Rate")
 plt.title("Rate vs v_pred — All Subjects")
 plt.grid(True, alpha=0.3)
+plt.show()
+
+
+vc_pred_np = vc.to_numpy().astype(np.float32) 
+vc_hat_np = vc_hat.cpu().numpy()
+
+# Predicted vc vs true vc 
+fig, axes = plt.subplots(P, 1, sharex=True)
+for j in range(P):
+    axes[j].plot(v_np, vc_pred_np[:, j], "k--", lw=2, label="beta_pred")
+    axes[j].plot(v_np, vc_hat_np[:, j], lw=2, label="beta_hat (mapped)")
+    axes[j].set_ylabel(f"beta[{j}]")
+    axes[j].grid(True, alpha=0.3)
+    axes[j].legend()
+axes[-1].set_xlabel("v (v_pred grid)")
+fig.suptitle("Varying coefficients: beta_hat(v) vs beta_pred(v)", y=0.995)
+plt.tight_layout()
 plt.show()
 
 # # Plot the mean rate + 95% CI
