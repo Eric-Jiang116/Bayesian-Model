@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 
 v  = pd.read_csv("data/v_pred.csv")    # v_pred (50, 1)
@@ -12,14 +13,28 @@ rate = pd.read_csv("data/r_pred.csv")   # (N, n_subjects)
 P = vc.shape[1]
 
 # split 60/20/20
-# v_train, v_test, vc_train, vc_test, rate_train, rate_test = train_test_split(v, vc, rate, test_size=0.2, random_state=42)
-# v_train, v_val, vc_train, vc_val, rate_train, rate_val = train_test_split(v_train, vc_train, rate_train, test_size=0.25, random_state=42)
 Xsub_train, Xsub_test, rate_train, rate_test = train_test_split(Xsub, rate.T, test_size=0.2, random_state=42)
 Xsub_train, Xsub_val, rate_train, rate_val = train_test_split(Xsub_train, rate_train, test_size=0.25, random_state=42)
 
-# # scale with TRAIN ONLY 
-#v_mean, v_std = float(v_train.mean().iloc[0]), float(v_train.std().iloc[0])
-# norm = lambda x: (x - v_mean) / (v_std)
+# Normalize Xsub_train
+# scaler = StandardScaler()
+# Xsub_train_norm = scaler.fit_transform(Xsub_train)  # fit only on train
+# Xsub_val_norm   = scaler.transform(Xsub_val)        # same scale as train
+# Xsub_test_norm  = scaler.transform(Xsub_test)       # same scale as train
+
+# convert to tensor
+X_sub = torch.tensor(Xsub.to_numpy()).float()
+rate_tensor = torch.tensor(rate.to_numpy()).float()
+v_np = v.to_numpy().reshape(-1).astype(np.float32)
+v = torch.tensor(v.to_numpy()).float()
+
+Xtrain = torch.tensor(Xsub_train.to_numpy()).float()
+Xval = torch.tensor(Xsub_val.to_numpy()).float()
+Xtest = torch.tensor(Xsub_test.to_numpy()).float()
+
+Ytrain = torch.tensor(rate_train.to_numpy()).float().T
+Yval = torch.tensor(rate_val.to_numpy()).float().T
+Ytest = torch.tensor(rate_test.to_numpy()).float().T
 
 # model
 def VCNet(P, hidden=(128, 256), dropout=0.2):
@@ -39,26 +54,10 @@ def rate_fn(vc, X_sub):
     """
     return torch.exp(vc @ X_sub.T) # transpose 
 
-# Xtrain, Xval, Xtest = map(norm, (v_train, v_val, v_test))
-# convert to tensor
-X_sub = torch.tensor(Xsub.to_numpy()).float()
-rate = torch.tensor(rate.to_numpy()).float()
-v_np = v.to_numpy().reshape(-1).astype(np.float32)
-v = torch.tensor(v.to_numpy()).float()
-
-Xtrain = torch.tensor(Xsub_train.to_numpy()).float()
-Xval = torch.tensor(Xsub_val.to_numpy()).float()
-Xtest = torch.tensor(Xsub_test.to_numpy()).float()
-
-Ytrain = torch.tensor(rate_train.to_numpy()).float().T
-Yval = torch.tensor(rate_val.to_numpy()).float().T
-Ytest = torch.tensor(rate_test.to_numpy()).float().T
-
 model = VCNet(P)
 opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn = nn.MSELoss()
 
-v_norm = (v - v.mean()) / v.std()
 # train
 for epoch in range(2000):
     model.train()
@@ -113,6 +112,7 @@ with torch.no_grad():
     rate_test_pred = rate_fn(vc_test_pred, Xtest)  # [N_test, n_subjects]
     test_mse = loss_fn(rate_test_pred, Ytest).item()
 print(f"Test MSE: {test_mse}")
+
 
 # --- evaluate & plot properly ---
 model.eval()
