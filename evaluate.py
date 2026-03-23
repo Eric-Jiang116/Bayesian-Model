@@ -69,7 +69,7 @@ def plot_trajectories(
     plt.tight_layout()
     plt.show()
 
-
+# !!!! rate and vc plots are off, need to update !!!!
 def plot_varying_coefficients(
     v_np: np.ndarray,
     beta_pred_np: np.ndarray,
