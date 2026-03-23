@@ -78,12 +78,12 @@ class VCDataset:
             f"beta_pred shape mismatch: expected {(self.K, self.P)}, got {beta_pred_np.shape}"
         )
 
-        self.t_grid     = torch.tensor(dage_np,      dtype=torch.float32)
-        self.v_grid     = torch.tensor(v_np,         dtype=torch.float32)
+        self.t_grid     = torch.tensor(dage_np, dtype=torch.float32)
+        self.v_grid     = torch.tensor(v_np, dtype=torch.float32)
         self.beta_pred  = torch.tensor(beta_pred_np, dtype=torch.float32)
         self.r_pred_np  = r_pred_np
         self.f_np       = f_np
-        self.X_all      = torch.tensor(X_np,         dtype=torch.float32)
+        self.X_all      = torch.tensor(X_np, dtype=torch.float32)
 
         # ── normalization statistics fit on Xsub (need to add) ───
         self.v_mean = float(v_np.mean())

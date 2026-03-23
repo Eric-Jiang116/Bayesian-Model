@@ -42,17 +42,17 @@ class VCNet(nn.Module):
 
         self.net = nn.Sequential(*layers)
 
-    def forward(self, v_norm: torch.Tensor) -> torch.Tensor:
+    def forward(self, v: torch.Tensor) -> torch.Tensor:
         """
         Parameters
         ----------
-        v_norm : [batch, 1]  normalised scalar input
+        v : [batch, 1]  scalar input
 
         Returns
         -------
         beta   : [batch, P]
         """
-        return self.net(v_norm)
+        return self.net(v)
 
 
 # ──────────────────────────────────────────────
@@ -71,6 +71,7 @@ def build_rhs(model: VCNet, X: torch.Tensor, norm_v_fn):
     def rhs(t, y):
         # y : [S]  current trajectory values for every subject
         y_norm = norm_v_fn(y).view(-1, 1)   # [S, 1]
+        print(y_norm.shape)
         beta   = model(y_norm)              # [S, P]
         rate   = torch.exp((beta * X).sum(dim=1))  # [S]
         return rate

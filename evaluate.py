@@ -28,7 +28,7 @@ def load_checkpoint(
     model : VCNet  (eval mode)
     ckpt  : raw checkpoint dict
     """
-    checkpt  = torch.load(checkpoint_path, map_location="cpu")
+    checkpt  = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
     model = VCNet(dataset.P, hidden=hidden, dropout=dropout)
     model.load_state_dict(checkpt["model_state_dict"])
     model.eval()
@@ -52,7 +52,7 @@ def plot_trajectories(
 
     for s in range(min(n_subjects, Y_test.shape[1])):
         plt.plot(dage_np, Y_test[:, s].cpu(),    "k--", alpha=0.3, label="True"      if s == 0 else "")
-        plt.plot(dage_np, mean_test[:, s].cpu(),                    label="Predicted" if s == 0 else "")
+        plt.plot(dage_np, mean_test[:, s].cpu(),                   label="Predicted" if s == 0 else "")
         plt.fill_between(
             dage_np,
             low_test[:, s].cpu(),
@@ -77,7 +77,7 @@ def plot_varying_coefficients(
     P: int,
 ):
     """Estimated β̂(v) vs ground-truth β(v) for each covariate."""
-    fig, axes = plt.subplots(P, 1, figsize=(8, 3 * P), sharex=True)
+    fig, axes = plt.subplots(P, 1, figsize=(8, 1.5 * P), sharex=True)
 
     if P == 1:
         axes = [axes]
@@ -156,8 +156,9 @@ def evaluate(
     # ── 2. Varying coefficients ───────────────────────
     model.eval()
     with torch.no_grad():
-        beta_hat = model(dataset.v_grid)                                 # [K, P]
-        rates    = torch.exp(beta_hat @ X_test.T)               # [K, S_test]
+        v_grid = dataset.v_grid.unsqueeze(-1) # [K,] -> [K, 1]
+        beta_hat = model(v_grid)                                 # [K, P]
+        rates = torch.exp(beta_hat @ X_test.T)               # [K, S_test]
 
     beta_hat_np = beta_hat.cpu().numpy()
     plot_varying_coefficients(v_np, beta_pred_np, beta_hat_np, dataset.P)
