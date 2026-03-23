@@ -1,116 +1,176 @@
-import pandas as pd
+"""
+Load a checkpoint and produce all evaluation plots.
+"""
+
 import numpy as np
 import torch
-import torch.nn as nn
 import matplotlib.pyplot as plt
-from torchdiffeq import odeint
 
-# ---------------- DATA ----------------
-X_sub_df     = pd.read_csv("data/Xsub.csv")
-f_df         = pd.read_csv("data/f_pred.csv")
-dage_df      = pd.read_csv("data/dage.csv")
-v_df         = pd.read_csv("data/v_pred.csv")
-beta_pred_df = pd.read_csv("data/beta_pred.csv")
-r_pred_df    = pd.read_csv("data/r_pred.csv")
+from data  import VCDataset
+from model import VCNet, predict_trajectories
 
-P          = X_sub_df.shape[1]
-v_np       = v_df.to_numpy().reshape(-1).astype(np.float32)
-beta_pred_np = beta_pred_df.to_numpy().astype(np.float32)
-r_pred_np  = r_pred_df.to_numpy().astype(np.float32)
-dage_np    = dage_df.to_numpy().reshape(-1).astype(np.float32)
-f_np       = f_df.to_numpy().astype(np.float32)
-X_all      = torch.tensor(X_sub_df.to_numpy().astype(np.float32))
-v_grid     = torch.tensor(v_np, dtype=torch.float32)
-t_grid     = torch.tensor(dage_np, dtype=torch.float32)
-i0         = int(torch.argmin(torch.abs(t_grid - 0.0)).item())
-beta = torch.tensor(beta_pred_np, dtype=torch.float32)
-# ---------------- MODEL DEFINITION (must match training) ----------------
-class VCNet(nn.Module):
-    def __init__(self, P, hidden=(64, 64), dropout=0.2):
-        super().__init__()
-        layers = []
-        in_dim = 1
-        for h in hidden:
-            layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)]
-            in_dim = h
-        last_layer = nn.Linear(in_dim, P, bias=True)
-        nn.init.zeros_(last_layer.weight) # start with zero output (prevent exploding numbers)
-        nn.init.zeros_(last_layer.bias)
-        layers += [last_layer]
-        self.net = nn.Sequential(*layers)
 
-    def forward(self, t_norm):  # [batch,1]
-        return self.net(t_norm) # [batch,P]
+# ──────────────────────────────────────────────
+# Loader
+# ──────────────────────────────────────────────
 
-rate = torch.exp(beta @ X_all.T)
-print(rate)
-print(r_pred_np)
-# ---------------- LOAD CHECKPOINT ----------------
-model = VCNet(P)
-checkpoint = torch.load("model_checkpoint.pt", weights_only=False)
-model.load_state_dict(checkpoint["model_state_dict"])
+def load_checkpoint(
+    checkpoint_path: str,
+    dataset: VCDataset,
+    hidden: tuple = (64, 64),
+    dropout: float = 0.2,
+) -> tuple[VCNet, dict]:
+    """
+    Restore a VCNet from a checkpoint file.
 
-v_mean = checkpoint["v_mean"]
-v_std  = checkpoint["v_std"]
-mean_test = checkpoint["mean_test"]
-low_test  = checkpoint["low_test"]
-high_test  = checkpoint["high_test"]
-idx_test = checkpoint["idx_test"]
-X_test = checkpoint["X_test"]
-Y_test = checkpoint["Y_test"]
+    Returns
+    -------
+    model : VCNet  (eval mode)
+    ckpt  : raw checkpoint dict
+    """
+    checkpt  = torch.load(checkpoint_path, map_location="cpu")
+    model = VCNet(dataset.P, hidden=hidden, dropout=dropout)
+    model.load_state_dict(checkpt["model_state_dict"])
+    model.eval()
+    return model, checkpt
 
-def norm_v(v):
-    return (v - v_mean) / v_std
 
-# ---------------- RUN EVALUATION / PLOTS ----------------
-plt.figure(figsize=(10, 5))
-for s in range(50):
-    plt.plot(dage_np, Y_test[:, s].cpu(), 'k--', alpha=0.3, label="True" if s==0 else "")
-    plt.plot(dage_np, mean_test[:, s].cpu())
-    plt.fill_between(dage_np, low_test[:, s].cpu(), high_test[:, s].cpu(), alpha=0.1)
+# ──────────────────────────────────────────────
+# Individual plots
+# ──────────────────────────────────────────────
 
-plt.axvline(0.0, color='gray', linestyle=':', alpha=0.7)
-plt.axhline(1.0, color='red', linestyle=':', label="f(0)=1")
-plt.title("Subject-Based Split: Predicted Trajectories (Test Set)")
-plt.xlabel("Disease Age")
-plt.ylabel("f(v)")
-plt.legend()
-plt.show()
+def plot_trajectories(
+    dage_np: np.ndarray,
+    Y_test: torch.Tensor,
+    mean_test: torch.Tensor,
+    low_test: torch.Tensor,
+    high_test: torch.Tensor,
+    n_subjects: int = 50,
+):
+    """Predicted vs true trajectories with MC-dropout uncertainty bands."""
+    plt.figure(figsize=(10, 5))
 
-model.eval()
-with torch.no_grad():
-    v_norm = norm_v(v_grid).view(-1, 1)     # [K,1] in the SAME normalization as training
-    beta_hat = model(v_norm)    # [K,P]
-    rates = torch.exp(beta_hat @ X_test.T)
-    
-beta_hat_np = beta_hat.cpu().numpy()
+    for s in range(min(n_subjects, Y_test.shape[1])):
+        plt.plot(dage_np, Y_test[:, s].cpu(),    "k--", alpha=0.3, label="True"      if s == 0 else "")
+        plt.plot(dage_np, mean_test[:, s].cpu(),                    label="Predicted" if s == 0 else "")
+        plt.fill_between(
+            dage_np,
+            low_test[:, s].cpu(),
+            high_test[:, s].cpu(),
+            alpha=0.1,
+        )
 
-# Predicted vc vs true vc 
-fig, axes = plt.subplots(P, 1, sharex=True)
-for j in range(P):
-    axes[j].plot(v_np, beta_pred_np[:, j], "k--", lw=2, label="beta_pred")
-    axes[j].plot(v_np, beta_hat_np[:, j], lw=2, label="beta_hat (mapped)")
-    axes[j].set_ylabel(f"beta[{j}]")
-    axes[j].grid(True, alpha=0.3)
-    axes[j].legend()
-axes[-1].set_xlabel("v (v_pred grid)")
-fig.suptitle("Varying coefficients: beta_hat(v) vs beta_pred(v)", y=0.995)
-plt.tight_layout()
-plt.show()
+    plt.axvline(0.0, color="gray", linestyle=":", alpha=0.7)
+    plt.axhline(1.0, color="red",  linestyle=":", label="f(0) = 1")
+    plt.title("Predicted Trajectories — Test Set")
+    plt.xlabel("Disease Age")
+    plt.ylabel("f(v)")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-# Rate vs value curve
-r_true = r_pred_np[:, idx_test]
-rates_np = rates.cpu().numpy()
 
-plt.figure(figsize=(10, 5))
-for s in range(min(50, X_test.shape[0])):
-    plt.plot(v_np, r_true[:, s], 'k--', alpha=0.2, label="True" if s == 0 else "")
-    plt.plot(v_np, rates_np[:, s], alpha=0.4, label="Predicted" if s == 0 else "")
+def plot_varying_coefficients(
+    v_np: np.ndarray,
+    beta_pred_np: np.ndarray,
+    beta_hat_np: np.ndarray,
+    P: int,
+):
+    """Estimated β̂(v) vs ground-truth β(v) for each covariate."""
+    fig, axes = plt.subplots(P, 1, figsize=(8, 3 * P), sharex=True)
 
-plt.axvline(1.0, color='red', linestyle=':', label="f(0)=1 anchor")
-plt.xlabel("fpred(v)")
-plt.ylabel("Rate")
-plt.title("Rate vs Value Curve — test subjects")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.show()
+    if P == 1:
+        axes = [axes]
+
+    for j, ax in enumerate(axes):
+        ax.plot(v_np, beta_pred_np[:, j], "k--", lw=2, label="True β")
+        ax.plot(v_np, beta_hat_np[:, j],         lw=2, label="Estimated β̂")
+        ax.set_ylabel(f"β[{j}]")
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+    axes[-1].set_xlabel("v")
+    fig.suptitle("Varying Coefficients: β̂(v) vs β(v)", y=1.002)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_rate_curves(
+    v_np: np.ndarray,
+    r_true: np.ndarray,
+    rates_np: np.ndarray,
+    n_subjects: int = 50,
+):
+    """Predicted rate-vs-value curves against ground truth."""
+    plt.figure(figsize=(10, 5))
+
+    for s in range(min(n_subjects, r_true.shape[1])):
+        plt.plot(v_np, r_true[:, s],   "k--", alpha=0.2, label="True"      if s == 0 else "")
+        plt.plot(v_np, rates_np[:, s],         alpha=0.4, label="Predicted" if s == 0 else "")
+
+    plt.axvline(1.0, color="red", linestyle=":", label="f(0) = 1 anchor")
+    plt.xlabel("f_pred(v)")
+    plt.ylabel("Rate")
+    plt.title("Rate vs Value Curve — Test Subjects")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+
+# ──────────────────────────────────────────────
+# Main evaluation pipeline
+# ──────────────────────────────────────────────
+
+def evaluate(
+    checkpoint_path: str = "model_checkpoint.pt",
+    data_dir: str = "data",
+    hidden: tuple = (64, 64),
+    dropout: float = 0.2,
+    n_plot: int = 50,
+):
+    """
+    Full evaluation pipeline:
+      1. Load dataset and checkpoint.
+      2. Plot predicted trajectories with uncertainty.
+      3. Plot estimated vs true varying coefficients.
+      4. Plot rate-vs-value curves.
+    """
+    dataset = VCDataset(data_dir=data_dir)
+    model, ckpt = load_checkpoint(checkpoint_path, dataset, hidden=hidden, dropout=dropout)
+
+    dage_np      = dataset.t_grid.numpy()
+    v_np         = dataset.v_grid.numpy()
+    beta_pred_np = dataset.beta_pred.numpy()
+
+    mean_test = ckpt["mean_test"]
+    low_test  = ckpt["low_test"]
+    high_test = ckpt["high_test"]
+    X_test    = ckpt["X_test"]
+    Y_test    = ckpt["Y_test"]
+    idx_test  = ckpt["idx_test"]
+
+    # ── 1. Trajectories ───────────────────────────────
+    plot_trajectories(dage_np, Y_test, mean_test, low_test, high_test, n_subjects=n_plot)
+
+    # ── 2. Varying coefficients ───────────────────────
+    model.eval()
+    with torch.no_grad():
+        beta_hat = model(dataset.v_grid)                                 # [K, P]
+        rates    = torch.exp(beta_hat @ X_test.T)               # [K, S_test]
+
+    beta_hat_np = beta_hat.cpu().numpy()
+    plot_varying_coefficients(v_np, beta_pred_np, beta_hat_np, dataset.P)
+
+    # ── 3. Rate curves ────────────────────────────────
+    r_true  = dataset.r_pred_np[:, idx_test]   # [K, S_test]
+    rates_np = rates.cpu().numpy()
+    plot_rate_curves(v_np, r_true, rates_np, n_subjects=n_plot)
+
+
+# ──────────────────────────────────────────────
+# Entry point
+# ──────────────────────────────────────────────
+
+if __name__ == "__main__":
+    evaluate()
