@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
+import torch.nn as nn
 from data  import VCDataset
 from model import VCNet, predict_trajectories
 
@@ -150,22 +151,27 @@ def evaluate(
     Y_test    = ckpt["Y_test"]
     idx_test  = ckpt["idx_test"]
 
+
+    model.eval()
+    loss_fn = nn.MSELoss()
+    with torch.no_grad():
+        v_grid = dataset.v_grid.unsqueeze(-1) # [K,] -> [K, 1]
+        beta_hat = model(v_grid)                                 # [K, P]
+        rates_hat = torch.exp(beta_hat @ X_test.T)              # [K, S_test]
+        preds = predict_trajectories(model, dataset.t_grid, dataset.X_test, dataset.norm_v, dataset.onset_index())
+        test_mse = loss_fn(preds, dataset.Y_test).item()
+    print(f"Test MSE: {test_mse:.6f}")
+
     # ── 1. Trajectories ───────────────────────────────
     plot_trajectories(dage_np, Y_test, mean_test, low_test, high_test, n_subjects=n_plot)
 
     # ── 2. Varying coefficients ───────────────────────
-    model.eval()
-    with torch.no_grad():
-        v_grid = dataset.v_grid.unsqueeze(-1) # [K,] -> [K, 1]
-        beta_hat = model(v_grid)                                 # [K, P]
-        rates = torch.exp(beta_hat @ X_test.T)               # [K, S_test]
-
     beta_hat_np = beta_hat.cpu().numpy()
     plot_varying_coefficients(v_np, beta_pred_np, beta_hat_np, dataset.P)
 
     # ── 3. Rate curves ────────────────────────────────
     r_true  = dataset.r_pred_np[:, idx_test]   # [K, S_test]
-    rates_np = rates.cpu().numpy()
+    rates_np = rates_hat.cpu().numpy()
     plot_rate_curves(v_np, r_true, rates_np, n_subjects=n_plot)
 
 
