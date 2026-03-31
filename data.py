@@ -21,10 +21,8 @@ def split_and_normalize(Xsub, rate):
     Xsub_train, Xsub_val, rate_train, rate_val = train_test_split(
         Xsub_train, rate_train, test_size=0.25, random_state=42
     )
-    # Compute stats from train only
-    train_mean = Xsub_train.mean(axis=0)
-    train_std  = Xsub_train.std(axis=0)
-
+    # Normalize Xsub, specifically the continuous covariate V4, leave V1/V2/V3 alone
+    
     # Apply to all splits
     # Xsub_train = (Xsub_train - train_mean) / train_std
     # Xsub_val   = (Xsub_val   - train_mean) / train_std

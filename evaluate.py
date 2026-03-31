@@ -37,12 +37,12 @@ def mc_dropout_predict(model, v, Xtest, n_samples=1000):
 ######################
 
 # ----- Rate vs Value Curve
-def plot_rate_vs_v(v, Xtest, model, v_np):
+def plot_rate_vs_v(v, Xtest, model):
     vmin, vmax = float(v.min()), float(v.max())
     v_grid = np.linspace(vmin, vmax, 50).astype(np.float32).reshape(-1, 1)
     
     with torch.no_grad():
-        vc_hat = model(v)
+        vc_hat = model(torch.tensor(v_grid))
         rate_pred = rate_fn(vc_hat, Xtest).cpu().numpy()
 
     plt.figure(figsize=(9, 6))
@@ -121,5 +121,5 @@ if __name__ == "__main__":
         print(f"Test point {j+1}: 95% CI = ({lower[j]:.4f}, {upper[j]:.4f})")
     model.eval()
     # Plots
-    plot_rate_vs_v(v_tensor, Xtest, model, v_np)
+    plot_rate_vs_v(v_tensor, Xtest, model)
     plot_vc_comparison(v_tensor, v_np, vc, model, P)
