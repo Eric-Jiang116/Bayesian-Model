@@ -70,7 +70,6 @@ def plot_trajectories(
     plt.tight_layout()
     plt.show()
 
-# !!!! rate and vc plots are off, need to update !!!!
 def plot_varying_coefficients(
     v_np: np.ndarray,
     beta_pred_np: np.ndarray,
@@ -78,18 +77,14 @@ def plot_varying_coefficients(
     P: int,
 ):
     """Estimated β̂(v) vs ground-truth β(v) for each covariate."""
-    fig, axes = plt.subplots(P, 1, figsize=(8, 1.5 * P), sharex=True)
+    fig, axes = plt.subplots(P, 1, 1, sharex=True)
 
-    if P == 1:
-        axes = [axes]
-
-    for j, ax in enumerate(axes):
-        ax.plot(v_np, beta_pred_np[:, j], "k--", lw=2, label="True β")
-        ax.plot(v_np, beta_hat_np[:, j],         lw=2, label="Estimated β̂")
-        ax.set_ylabel(f"β[{j}]")
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-
+    for j in range(P):
+        axes.plot(v_np, beta_pred_np[:, j], "k--", lw=2, label="True β")
+        axes.plot(v_np, beta_hat_np[:, j],         lw=2, label="Estimated β̂")
+        axes.set_ylabel(f"β[{j}]")
+        axes.grid(True, alpha=0.3)
+        axes.legend()
     axes[-1].set_xlabel("v")
     fig.suptitle("Varying Coefficients: β̂(v) vs β(v)", y=1.002)
     plt.tight_layout()
@@ -110,7 +105,7 @@ def plot_rate_curves(
         plt.plot(v_np, rates_np[:, s],         alpha=0.4, label="Predicted" if s == 0 else "")
 
     plt.axvline(1.0, color="red", linestyle=":", label="f(0) = 1 anchor")
-    plt.xlabel("f_pred(v)")
+    plt.xlabel("v")
     plt.ylabel("Rate")
     plt.title("Rate vs Value Curve — Test Subjects")
     plt.legend()
