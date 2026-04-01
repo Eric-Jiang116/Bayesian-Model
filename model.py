@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 from torchdiffeq import odeint
 
-
 # ──────────────────────────────────────────────
 # Network
 # ──────────────────────────────────────────────
@@ -54,14 +53,23 @@ class VCNet(nn.Module):
         """
         return self.net(v)
 
+def get_dropout(x, p=0.5, mc=False):
+    return nn.Dropout(p)(x) if mc else x
 
 # ──────────────────────────────────────────────
 # ODE wrapper
 # ──────────────────────────────────────────────
+def build_rhs(model, X, norm_v_fn, sign=1.0):
+    def rhs(t, y):
+        y_norm = norm_v_fn(y).view(-1, 1)
+        beta   = model(y_norm)
+        rate   = torch.exp((beta * X).sum(dim=1))
+        return sign * rate
+    return rhs
 
-def build_rhs(model: VCNet, X: torch.Tensor, norm_v_fn):
+def build_rhs(model: VCNet, X: torch.Tensor, norm_v_fn, sign=1.0):
     """
-    Return the ODE right-hand side  dy/dt = exp(β(y) · x)  for all subjects.
+    Return the ODE dy/dt = exp(β(y) · x)  for all subjects.
 
     Parameters
     ----------
@@ -71,13 +79,10 @@ def build_rhs(model: VCNet, X: torch.Tensor, norm_v_fn):
     def rhs(t, y):
         # y : [S]  current trajectory values for every subject
         y_norm = norm_v_fn(y).view(-1, 1)   # [S, 1]
-        print(y_norm.shape)
         beta   = model(y_norm)              # [S, P]
         rate   = torch.exp((beta * X).sum(dim=1))  # [S]
-        return rate
-
+        return sign * rate
     return rhs
-
 
 def predict_trajectories(
     model: VCNet,
@@ -105,12 +110,15 @@ def predict_trajectories(
     -------
     F : [T, S]  predicted trajectories
     """
-    rhs  = build_rhs(model, X, norm_v_fn)
+    # in predict_trajectories:
+    rhs_fwd  = build_rhs(model, X, norm_v_fn, sign=+1.0)
+    #rhs_bwd  = build_rhs(model, X, norm_v_fn, sign=-1.0)
+
     y0   = torch.ones(X.shape[0], dtype=torch.float32)
     opts = {"step_size": step_size}
 
-    forward  = odeint(rhs, y0, t_grid[i0:], method=method, options=opts)             # [T-i0, S]
-    backward = odeint(rhs, y0, t_grid[:i0+1].flip(0), method=method, options=opts)   # [i0+1, S]
+    forward  = odeint(rhs_fwd, y0, t_grid[i0:], method=method, options=opts)             # [T-i0, S]
+    backward = odeint(rhs_fwd, y0, t_grid[:i0+1].flip(0), method=method, options=opts)   # [i0+1, S]
     backward = backward.flip(0)
 
     F = torch.cat([backward[:-1], forward], dim=0)  # [T, S]

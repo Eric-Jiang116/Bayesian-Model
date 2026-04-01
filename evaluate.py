@@ -18,7 +18,7 @@ from model import VCNet, predict_trajectories
 def load_checkpoint(
     checkpoint_path: str,
     dataset: VCDataset,
-    hidden: tuple = (64, 64),
+    hidden: tuple = (128, 64),
     dropout: float = 0.2,
 ) -> tuple[VCNet, dict]:
     """
@@ -126,7 +126,7 @@ def plot_rate_curves(
 def evaluate(
     checkpoint_path: str = "model_checkpoint.pt",
     data_dir: str = "data",
-    hidden: tuple = (64, 64),
+    hidden: tuple = (128, 64),
     dropout: float = 0.2,
     n_plot: int = 50,
 ):
@@ -156,7 +156,7 @@ def evaluate(
     loss_fn = nn.MSELoss()
     with torch.no_grad():
         v_grid = dataset.v_grid.unsqueeze(-1) # [K,] -> [K, 1]
-        beta_hat = model(v_grid)                                 # [K, P]
+        beta_hat = model(dataset.norm_v(v_grid))                                 # [K, P]
         rates_hat = torch.exp(beta_hat @ X_test.T)              # [K, S_test]
         preds = predict_trajectories(model, dataset.t_grid, dataset.X_test, dataset.norm_v, dataset.onset_index())
         test_mse = loss_fn(preds, dataset.Y_test).item()

@@ -59,7 +59,7 @@ class VCDataset:
         raw = load_raw(data_dir)
 
         # ── numpy / tensor conversion ──────────────────
-        v_np           = raw["v_pred"].to_numpy().reshape(-1).astype(np.float32)
+        v_np            = raw["v_pred"].to_numpy().reshape(-1).astype(np.float32)
         dage_np         = raw["dage"].to_numpy().reshape(-1).astype(np.float32)
         f_np            = raw["f_pred"].to_numpy().astype(np.float32)
         beta_pred_np    = raw["beta_pred"].to_numpy().astype(np.float32)
@@ -77,6 +77,7 @@ class VCDataset:
         assert beta_pred_np.shape == (self.K, self.P), (
             f"beta_pred shape mismatch: expected {(self.K, self.P)}, got {beta_pred_np.shape}"
         )
+    
 
         self.t_grid     = torch.tensor(dage_np, dtype=torch.float32)
         self.v_grid     = torch.tensor(v_np, dtype=torch.float32)
@@ -84,7 +85,7 @@ class VCDataset:
         self.r_pred_np  = r_pred_np
         self.f_np       = f_np
         self.X_all      = torch.tensor(X_np, dtype=torch.float32)
-
+        self.v_np       = v_np
         # ── normalization statistics fit on Xsub (need to add) ───
         self.v_mean = float(v_np.mean())
         self.v_std  = float(v_np.std() + 1e-8)
@@ -120,3 +121,5 @@ class VCDataset:
     def onset_index(self) -> int:
         """Return the index in t_grid closest to disease onset (t=0)."""
         return int(torch.argmin(torch.abs(self.t_grid - 0.0)).item())
+    
+dataset = VCDataset(data_dir="data")

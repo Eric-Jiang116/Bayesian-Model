@@ -66,10 +66,10 @@ def mc_dropout_predict(
 
 def train(
     dataset: VCDataset,
-    epochs: int = 2000,
+    epochs: int = 1000,
     lr: float = 1e-3,
     weight_decay: float = 1e-4,
-    hidden: tuple = (64, 64),
+    hidden: tuple = (128, 64),
     dropout: float = 0.2,
     log_every: int = 100,
     checkpoint_path: str = "model_checkpoint.pt",
