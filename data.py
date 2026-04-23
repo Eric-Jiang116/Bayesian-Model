@@ -91,41 +91,41 @@ class VCDataset:
         self.v_std  = float(v_np.std() + 1e-8)
  
         # ── splits (60/20/20) ─────────────────────────────────────
-        f_pred_T = self.f_np.T # transpose f_pred to get [S, T]
+        # f_pred_T = self.f_np.T # transpose f_pred to get [S, T]
 
-        X_train_full, X_test, f_train_full, f_test = train_test_split(
-            self.X_all, f_pred_T, test_size=0.2, random_state=SEED, shuffle=True
-        )
+        # X_train_full, X_test, f_train_full, f_test = train_test_split(
+        #     self.X_all, f_pred_T, test_size=0.2, random_state=SEED, shuffle=True
+        # )
 
-        X_train, X_val, f_train, f_val = train_test_split(
-            X_train_full, f_train_full, test_size=0.25, random_state=SEED, shuffle=True
-        )
+        # X_train, X_val, f_train, f_val = train_test_split(
+        #     X_train_full, f_train_full, test_size=0.25, random_state=SEED, shuffle=True
+        # )
 
-        # Transpose back to [T, S] for your ODE solver
-        self.X_train, self.Y_train = X_train, f_train.T
-        self.X_val,   self.Y_val   = X_val,   f_val.T
-        self.X_test,  self.Y_test  = X_test,  f_test.T
+        # # Transpose back to [T, S] for your ODE solver
+        # self.X_train, self.Y_train = X_train, f_train.T
+        # self.X_val,   self.Y_val   = X_val,   f_val.T
+        # self.X_test,  self.Y_test  = X_test,  f_test.T
 
-        print(self.X_train.shape, self.Y_train.shape)
+        # print(self.X_train.shape, self.Y_train.shape)
 
-        print(self.X_test.shape, self.Y_test.shape)
+        # print(self.X_test.shape, self.Y_test.shape)
         
-        #all_idx = np.arange(self.n_subjects)
+        all_idx = np.arange(self.n_subjects)
 
-        # idx_train_full, idx_test = train_test_split(
-        #     all_idx, test_size=0.2, random_state=SEED, shuffle=True
-        # )
-        # idx_train, idx_val = train_test_split(
-        #     idx_train_full, test_size=0.25, random_state=SEED, shuffle=True
-        # )
+        idx_train_full, idx_test = train_test_split(
+            all_idx, test_size=0.2, random_state=SEED, shuffle=True
+        )
+        idx_train, idx_val = train_test_split(
+            idx_train_full, test_size=0.25, random_state=SEED, shuffle=True
+        )
 
-        # self.idx_train = idx_train
-        # self.idx_val   = idx_val
-        # self.idx_test  = idx_test
+        self.idx_train = idx_train
+        self.idx_val   = idx_val
+        self.idx_test  = idx_test
 
-        # self.X_train, self.Y_train = self._slice(idx_train)
-        # self.X_val,   self.Y_val   = self._slice(idx_val)
-        # self.X_test,  self.Y_test  = self._slice(idx_test)
+        self.X_train, self.Y_train = self._slice(idx_train)
+        self.X_val,   self.Y_val   = self._slice(idx_val)
+        self.X_test,  self.Y_test  = self._slice(idx_test)
 
     # ── helpers ────────────────────────────────────────
 
